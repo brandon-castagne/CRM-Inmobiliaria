@@ -1,7 +1,7 @@
 {
-  "name": "Mi CRM Inmobiliario",
-  "short_name": "CRM Inmo",
-  "description": "CRM para asesores inmobiliarios: clientes, propiedades, visitas y cierres.",
+  "name": "Mi CRM de Clientes",
+  "short_name": "Mi CRM",
+  "description": "CRM personal de clientes para asesor inmobiliario: seguimientos, visitas y estadísticas.",
   "lang": "es-BO",
   "start_url": "./index.html",
   "scope": "./",
@@ -10,9 +10,26 @@
   "background_color": "#f3f7f6",
   "theme_color": "#0f766e",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
   ]
 }

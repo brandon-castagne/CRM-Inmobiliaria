@@ -2,206 +2,199 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0f766e" />
-  <title>Mi CRM Inmobiliario</title>
+  <title>Mi CRM de Clientes</title>
+  <meta name="description" content="CRM personal de clientes para asesor inmobiliario" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="manifest" href="manifest.json" />
-  <meta name="description" content="CRM local para asesores inmobiliarios de Sucre, Bolivia" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-title" content="CRM Inmobiliario" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="CRM Clientes" />
 </head>
 <body>
-  <div class="app-shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">CRM inmobiliario</p>
-        <h1>Mi cartera inmobiliaria</h1>
-      </div>
-      <div class="top-actions"><label class="global-search"><span>⌕</span><input id="globalSearch" type="search" placeholder="Buscar todo..." autocomplete="off" /><div id="globalResults" class="global-results"></div></label>
-        <button class="icon-button" id="themeToggle" title="Cambiar tema" aria-label="Cambiar tema">◐</button>
-        <button class="primary-button" id="newPropertyButton">+ Nueva propiedad</button><button id="importCsvButton" class="secondary-button" type="button">Importar CSV</button><input id="importCsvFile" type="file" accept=".csv,text/csv" hidden />
-      </div>
-    </header>
+  <header class="topbar">
+    <div class="brand"><img src="icon.svg" alt="" width="34" height="34" /><div><strong>Mi CRM</strong><span id="lastSavedLabel" class="muted small">Listo</span></div></div>
+  </header>
 
-    <nav class="main-nav" aria-label="Navegación principal">
-      <button class="nav-button nav-primary active" data-view="dashboardView">Inicio</button>
-      <button class="nav-button nav-primary" data-view="propertiesView">Propiedades</button>
-      <button class="nav-button" data-view="publicationView">Publicaciones</button>
-      <button class="nav-button nav-primary" data-view="clientsView">Clientes</button>
-      <button class="nav-button" data-view="followupsView">Seguimientos</button>
-      <button class="nav-button nav-primary" data-view="visitsView">Visitas</button>
-      <button class="nav-button" data-view="ownersView">Propietarios</button>
-      <button class="nav-button" data-view="closuresView">Cierres</button>
-      <button class="nav-button" data-view="calculatorsView">Calculadoras</button>
-      <button class="nav-button" data-view="libraryView">Biblioteca</button>
-      <button class="nav-button" data-view="reportsView">Reportes</button>
-      <button class="nav-button" data-view="backupView">Copias de seguridad</button>
-      <button class="nav-button more-button" id="moreNav" aria-expanded="false">Más ⋯</button>
-    </nav>
+  <main class="app">
+    <!-- HOY -->
+    <section id="todayView" class="view active">
+      <div class="kpis" id="todayKpis"></div>
+      <div class="block"><h2>Seguimientos atrasados</h2><div id="overdueList" class="list"></div></div>
+      <div class="block"><h2>Para hoy</h2><div id="todayList" class="list"></div></div>
+      <div class="block"><h2>Visitas próximas</h2><div id="upcomingVisits" class="list"></div></div>
+      <div class="block"><h2>Nuevos sin contactar</h2><div id="newList" class="list"></div></div>
+    </section>
 
-    <main>
-      <section id="dashboardView" class="view active-view">
-        <div class="page-heading">
-          <div><p class="eyebrow">Resumen</p><h2>Tu actividad</h2></div>
-          <span class="muted" id="lastSavedLabel">Sin datos guardados</span>
+    <!-- CLIENTES -->
+    <section id="clientsView" class="view">
+      <div class="search"><input id="clientSearch" type="search" placeholder="Buscar nombre, celular, DOM, zona, etiqueta…" autocomplete="off" /></div>
+      <div class="filters">
+        <select id="filterStage" aria-label="Etapa"><option value="">Todas las etapas</option></select>
+        <select id="filterPriority" aria-label="Prioridad"><option value="">Toda prioridad</option><option value="caliente">🔥 Caliente</option><option value="tibia">🌤 Tibia</option><option value="fria">❄ Fría</option></select>
+        <select id="filterSource" aria-label="Origen"><option value="">Todo origen</option></select>
+        <select id="sortClients" aria-label="Orden"><option value="follow">Próximo seguimiento</option><option value="recent">Últimos modificados</option><option value="name">Nombre A-Z</option></select>
+      </div>
+      <p id="clientCount" class="muted small"></p>
+      <div id="clientList" class="list"></div>
+    </section>
+
+    <!-- VISITAS -->
+    <section id="visitsView" class="view">
+      <div class="row-between"><h2>Visitas</h2><button class="primary" id="newVisitBtn">+ Visita</button></div>
+      <div class="segmented" id="visitTabs"><button data-v="next" class="on">Próximas</button><button data-v="past">Anteriores</button></div>
+      <div id="visitList" class="list"></div>
+    </section>
+
+    <!-- ESTADÍSTICAS -->
+    <section id="statsView" class="view">
+      <div class="row-between"><h2>Estadísticas</h2>
+        <select id="statsPeriod" class="auto"><option value="month">Este mes</option><option value="prev">Mes pasado</option><option value="year">Este año</option><option value="all">Todo</option></select></div>
+      <div class="kpis" id="statsKpis"></div>
+      <div class="block"><h3>Embudo actual</h3><div id="funnel" class="bars"></div></div>
+      <div class="block"><h3>Origen de clientes nuevos</h3><div id="bySource" class="bars"></div></div>
+      <div class="block"><h3>Cierres del periodo</h3><div id="closingsList" class="list"></div></div>
+      <div class="block"><h3>Motivos de pérdida</h3><div id="lostReasons" class="bars"></div></div>
+    </section>
+
+    <!-- AJUSTES -->
+    <section id="settingsView" class="view">
+      <h2>Ajustes</h2>
+      <form id="settingsForm" class="card form">
+        <label>Tu nombre<input id="setName" maxlength="80" /></label>
+        <label>Tipo de cambio Bs por USD<input id="setRate" type="number" min="0.01" step="0.01" /></label>
+        <label>Comisión habitual (%)<input id="setCommission" type="number" min="0" max="100" step="0.1" /></label>
+        <label>Días hasta el siguiente seguimiento<input id="setFollowDays" type="number" min="1" max="60" /></label>
+        <label>Saludo de WhatsApp<input id="setGreeting" maxlength="200" placeholder="Hola {nombre}, " /></label>
+        <label class="check"><input type="checkbox" id="setAutoLog" /> Registrar en el historial cada vez que toco WhatsApp o Llamar</label>
+        <button class="primary" type="submit">Guardar ajustes</button>
+      </form>
+      <div class="card">
+        <h3>Tema</h3>
+        <div class="segmented" id="themeTabs"><button data-t="auto">Automático</button><button data-t="light">Claro</button><button data-t="dark">Oscuro</button></div>
+      </div>
+      <div class="card">
+        <h3>Sincronización</h3>
+        <p class="muted small" id="syncHelp">Inicia sesión con Google (botón arriba) para tener tus clientes en tus dos celulares y respaldados en la nube. Sin sesión, los datos quedan solo en este dispositivo.</p>
+      </div>
+      <div class="card">
+        <h3>Respaldos y exportación</h3>
+        <div class="stack">
+          <button class="secondary" id="exportJson">Descargar respaldo (JSON)</button>
+          <button class="secondary" id="importJsonBtn">Restaurar respaldo</button><input type="file" id="importJson" accept=".json,application/json" hidden />
+          <button class="secondary" id="exportCsv">Exportar clientes a Excel (CSV)</button>
+          <button class="danger" id="wipeAll">Borrar todos los datos de este dispositivo</button>
         </div>
-        <div class="stats-grid">
-          <article class="stat-card"><span>Propiedades totales</span><strong id="statTotal">0</strong></article>
-          <article class="stat-card"><span>Disponibles</span><strong id="statAvailable">0</strong></article>
-          <article class="stat-card"><span>En venta</span><strong id="statSale">0</strong></article>
-          <article class="stat-card"><span>En alquiler/anticrético</span><strong id="statRent">0</strong></article><article class="stat-card"><span>Clientes activos</span><strong id="statClients">0</strong></article><article class="stat-card"><span>Seguimientos pendientes</span><strong id="statFollowups">0</strong></article>
-        </div>
-        <article class="panel" id="todayPanel"></article>
-        <div class="content-grid two-columns">
-          <article class="panel">
-            <div class="panel-heading"><h3>Acciones rápidas</h3></div>
-            <div class="quick-actions">
-              <button class="secondary-button" data-action="new-property">Registrar propiedad</button><button class="secondary-button" data-action="new-client">Registrar cliente</button><button class="secondary-button" data-action="new-visit">Agendar visita</button>
-              <button class="secondary-button" data-action="open-publications">Crear publicación</button>
-              <button class="secondary-button" data-action="open-backup">Respaldar información</button><button class="secondary-button" data-action="open-onboarding">Ver guía inicial</button>
+      </div>
+      <p class="muted small center">Mi CRM de Clientes · <span id="appVersion"></span></p>
+    </section>
+  </main>
+
+  <button class="fab" id="fab" aria-label="Nuevo cliente">+</button>
+
+  <nav class="tabbar" aria-label="Navegación">
+    <button data-view="todayView" class="on"><span>☀</span>Hoy</button>
+    <button data-view="clientsView"><span>👥</span>Clientes</button>
+    <button data-view="visitsView"><span>📅</span>Visitas</button>
+    <button data-view="statsView"><span>📊</span>Estadísticas</button>
+    <button data-view="settingsView"><span>⚙</span>Ajustes</button>
+  </nav>
+
+  <!-- FICHA DE CLIENTE -->
+  <dialog id="clientDialog" class="sheet">
+    <form id="clientForm" method="dialog">
+      <header class="sheet-head"><button type="button" class="ghost" data-close>✕</button><h2 id="clientTitle">Nuevo cliente</h2><button type="submit" class="primary small">Guardar</button></header>
+      <div class="sheet-body">
+        <input type="hidden" id="cId" />
+        <div id="contactBar" class="contact-bar"></div>
+        <fieldset><legend>Contacto</legend>
+          <label>Nombre completo*<input id="cName" required maxlength="100" autocomplete="off" /></label>
+          <div class="grid2">
+            <label>Celular*<input id="cPhone" required inputmode="tel" maxlength="20" placeholder="7XXXXXXX" /></label>
+            <label>Celular alternativo<input id="cPhone2" inputmode="tel" maxlength="20" /></label>
+          </div>
+          <p id="dupWarning" class="warn small" hidden></p>
+          <div class="grid2">
+            <label>Origen<select id="cSource"></select></label>
+            <label>Prioridad<select id="cPriority"><option value="caliente">🔥 Caliente</option><option value="tibia" selected>🌤 Tibia</option><option value="fria">❄ Fría</option></select></label>
+          </div>
+          <label>Etiquetas <span class="muted small">(separadas por coma)</span><input id="cTags" maxlength="200" placeholder="crédito bancario, urgente" /></label>
+        </fieldset>
+
+        <fieldset><legend>Etapa y seguimiento</legend>
+          <div class="grid2">
+            <label>Etapa<select id="cStage"></select></label>
+            <label>Próximo seguimiento<input id="cFollowUp" type="datetime-local" /></label>
+          </div>
+          <div id="lostBox" hidden><label>Motivo de pérdida<select id="cLostReason"><option value="">—</option><option>Precio / presupuesto</option><option>Compró con otro</option><option>Ya no busca</option><option>No responde</option><option>No califica (crédito)</option><option>Otro</option></select></label></div>
+          <div id="closeBox" class="close-box" hidden>
+            <p class="muted small">Datos del cierre (opcionales, solo para tus estadísticas)</p>
+            <div class="grid2">
+              <label>Fecha<input id="kDate" type="date" /></label>
+              <label>Código<input id="kCode" placeholder="DOM-000000" maxlength="12" /></label>
+              <label>Monto de la operación<input id="kAmount" type="number" min="0" step="0.01" /></label>
+              <label>Moneda<select id="kCurrency"><option>USD</option><option>Bs</option></select></label>
+              <label>Comisión (%)<input id="kPct" type="number" min="0" max="100" step="0.1" /></label>
+              <label>Tu comisión<output id="kResult" class="output">—</output></label>
             </div>
-          </article>
-          <article class="panel">
-            <div class="panel-heading"><h3>Últimas propiedades</h3><button class="text-button" data-action="open-properties">Ver todas</button></div>
-            <div id="recentProperties" class="compact-list"><p class="empty-state">Todavía no hay propiedades.</p></div>
-          </article>
-        </div>
-      </section>
+          </div>
+        </fieldset>
 
-      <section id="reportsPreview" class="panel dashboard-preview"><div class="panel-heading"><h3>Reportes rápidos</h3><button class="text-button" data-view-link="reportsView">Ver reportes</button></div><div class="mini-chart-grid"><div><h4>Clientes por etapa</h4><canvas id="miniStageChart" width="360" height="180"></canvas></div><div><h4>Propiedades por zona</h4><canvas id="miniZoneChart" width="360" height="180"></canvas></div></div></section>
+        <fieldset><legend>Qué busca</legend>
+          <div class="grid2">
+            <label>Operación<select id="cOperation"><option value="">Cualquiera</option><option value="venta">Compra</option><option value="alquiler">Alquiler</option><option value="anticretico">Anticrético</option></select></label>
+            <label>Tipo<select id="cType"><option value="">Cualquiera</option><option value="casa">Casa</option><option value="departamento">Departamento</option><option value="terreno">Terreno</option><option value="local">Local comercial</option><option value="oficina">Oficina</option><option value="cuarto">Cuarto</option></select></label>
+            <label>Presupuesto máx.<input id="cBudget" type="number" min="0" step="1" /></label>
+            <label>Moneda<select id="cCurrency"><option>USD</option><option>Bs</option></select></label>
+            <label>Zona(s)<input id="cZone" maxlength="100" /></label>
+            <label>Dormitorios mín.<input id="cBedrooms" type="number" min="0" max="20" /></label>
+          </div>
+          <label>Forma de pago<select id="cPayment"><option value="">—</option><option>Contado</option><option>Crédito bancario</option><option>Mixto</option></select></label>
+          <label>Notas<textarea id="cNotes" rows="3" maxlength="2000"></textarea></label>
+        </fieldset>
 
-      <section id="propertiesView" class="view">
-        <div class="page-heading">
-          <div><p class="eyebrow">Inventario</p><h2>Propiedades</h2></div>
-          <button class="primary-button" id="newPropertyButton2">+ Nueva propiedad</button>
-        </div>
-        <div class="toolbar panel">
-          <label class="search-field"><span>⌕</span><input id="propertySearch" type="search" placeholder="Buscar por código, zona, dirección..." /></label>
-          <select id="operationFilter"><option value="">Todas las operaciones</option><option value="venta">Venta</option><option value="alquiler">Alquiler</option><option value="anticretico">Anticrético</option></select>
-          <select id="statusFilter"><option value="">Todos los estados</option><option value="disponible">Disponible</option><option value="reservado">Reservado</option><option value="vendido">Vendido/alquilado</option></select>
-          <select id="propertySort"><option value="updated">Más recientes</option><option value="priceAsc">Precio menor</option><option value="priceDesc">Precio mayor</option><option value="zone">Zona A-Z</option></select>
-        </div>
-        <div class="toolbar panel">
-<label>Zona<input id="zoneFilter" placeholder="Filtrar zona" /></label>
-<label>Tipo<select id="typeFilter"><option value="">Todos</option><option value="casa">Casa</option><option value="departamento">Departamento</option><option value="cuarto">Cuarto</option><option value="local">Local</option><option value="terreno">Terreno</option><option value="oficina">Oficina</option></select></label>
-<label>Precio mínimo Bs<input id="minPrice" type="number" min="0" /></label><label>Precio máximo Bs<input id="maxPrice" type="number" min="0" /></label></div>
-<div id="propertiesList" class="property-grid"></div>
-      </section>
+        <fieldset><legend>Propiedades enviadas / de interés</legend>
+          <div class="code-add"><input id="codeInput" placeholder="DOM-000001 o solo 1" maxlength="12" /><input id="codeNote" placeholder="Nota (opcional)" maxlength="120" /><button type="button" class="secondary" id="addCode">Añadir</button></div>
+          <p id="codeError" class="warn small" hidden></p>
+          <div id="codeList" class="codes"></div>
+        </fieldset>
 
-      <section id="publicationView" class="view">
-        <div class="page-heading"><div><p class="eyebrow">Contenido</p><h2>Generador de publicaciones</h2></div></div>
-        <div class="content-grid publication-layout">
-          <article class="panel">
-            <label>Selecciona una propiedad<select id="publicationPropertySelect"></select></label>
-            <div id="publicationPropertySummary" class="selection-summary"><p class="empty-state">Selecciona una propiedad para generar sus textos.</p></div>
-            <p class="small muted">Se guarda una plantilla por operación. Variables: {zona}, {precio}, {dormitorios}, {banos}, {caracteristicas}, {asesor}, {telefono}, {inmobiliaria}.</p><label>Plantilla de descripción<textarea id="descriptionTemplate" rows="9">✨ {tipo} en {operacion} en {zona}
-📍 {referencia}
-{caracteristicas}
-💰 Precio: {precio}
-📲 Escríbeme para coordinar una visita.</textarea></label>
-            <button class="primary-button full-width" id="generatePublicationButton">Generar textos</button>
-          </article>
-          <article class="panel generated-panel">
-            <div id="generatedContent"><p class="empty-state">Los textos aparecerán aquí.</p></div>
-          </article>
-        </div>
-      </section>
+        <fieldset id="historyBox"><legend>Historial</legend>
+          <div class="log-add">
+            <select id="logType"><option value="whatsapp">💬 WhatsApp</option><option value="llamada">📞 Llamada</option><option value="visita">🏠 Visita</option><option value="reunion">🤝 Reunión</option><option value="nota">📝 Nota</option></select>
+            <input id="logNote" placeholder="¿Qué pasó?" maxlength="1000" />
+            <button type="button" class="secondary" id="addLog">Añadir</button>
+          </div>
+          <div id="logList" class="timeline"></div>
+        </fieldset>
 
-      <section id="clientsView" class="view">
-        <div class="page-heading"><div><p class="eyebrow">Mini CRM</p><h2>Clientes e interesados</h2></div><button class="primary-button" id="newClientButton">+ Nuevo cliente</button></div>
-        <div class="toolbar panel client-toolbar"><label class="search-field"><span>⌕</span><input id="clientSearch" type="search" placeholder="Buscar nombre, teléfono o zona..." /></label><select id="clientSourceFilter"><option value="">Todos los orígenes</option><option>Marketplace</option><option>Facebook</option><option>Instagram</option><option>TikTok</option><option>WhatsApp</option><option>Referido</option><option>Otro</option></select><select id="clientStatusFilter"><option value="">Todas las etapas</option><option value="nuevo">Nuevo</option><option value="contactado">Contactado</option><option value="visita">Visita agendada</option><option value="negociando">Negociando</option><option value="cerrado">Cerrado</option><option value="perdido">Perdido</option></select></div>
-        <div id="clientsBoard" class="kanban-board"></div>
-      </section>
-
-      <section id="followupsView" class="view">
-        <div class="page-heading"><div><p class="eyebrow">Agenda comercial</p><h2>Seguimientos</h2></div><button class="primary-button" id="newClientButton2">+ Nuevo cliente</button></div>
-        <div class="content-grid two-columns"><article class="panel"><div class="panel-heading"><h3>Hoy y atrasados</h3><span class="badge" id="followupCount">0</span></div><div id="todayFollowups" class="followup-list"></div></article><article class="panel"><h3>Clientes sin contacto</h3><p class="muted small">Se muestran después del número de días configurado.</p><div id="staleClients" class="followup-list"></div></article></div>
-      </section>
-
-      <section id="visitsView" class="view">
-        <div class="page-heading"><div><p class="eyebrow">Agenda</p><h2>Visitas</h2></div><button id="newVisitButton" class="primary-button">+ Agendar visita</button></div>
-        <div class="toolbar panel"><label>Fecha<input id="calendarDate" type="date" /></label><label>Vista<select id="calendarMode"><option value="day">Día</option><option value="week">Semana</option></select></label><button id="previousPeriod" class="secondary-button">← Anterior</button><button id="nextPeriod" class="secondary-button">Siguiente →</button><button id="exportIcs" class="secondary-button">Exportar a calendario (.ics)</button></div>
-        <div id="visitReminder" class="panel" role="status" aria-live="polite"></div><div id="visitCalendar" class="visit-calendar"></div>
-      </section>
-      <section id="ownersView" class="view"><div class="page-heading"><div><p class="eyebrow">Captación</p><h2>Propietarios</h2></div><button id="newOwnerButton" class="primary-button">+ Nuevo propietario</button></div><div class="toolbar panel"><label class="search-field"><span>⌕</span><input id="ownerSearch" type="search" placeholder="Buscar propietario o teléfono..." /></label><select id="ownerStageFilter"><option value="">Todas las etapas</option><option value="contacted">Contactado</option><option value="meeting">Reunión</option><option value="documents">Documentos pendientes</option><option value="signed">Contrato firmado</option><option value="lost">No captado</option></select></div><div id="ownersList" class="owner-grid"></div></section>
-      <section id="closuresView" class="view"><div class="page-heading"><div><p class="eyebrow">Resultados</p><h2>Cierres y comisiones</h2></div><button id="newClosureButton" class="primary-button">+ Registrar cierre</button></div><div class="stats-grid closure-stats"><article class="stat-card"><span>Ingresos del mes</span><strong id="monthlyIncome">Bs 0</strong></article><article class="stat-card"><span>Operaciones cerradas</span><strong id="monthlyDeals">0</strong></article><article class="stat-card"><span>Pendiente de cobro</span><strong id="pendingIncome">Bs 0</strong></article></div><div id="closuresList" class="closure-list"></div></section>
-      <section id="calculatorsView" class="view"><div class="page-heading"><div><p class="eyebrow">Herramientas</p><h2>Calculadoras inmobiliarias</h2></div></div><div class="calculator-grid"><article class="panel"><h3>Conversor Bs / USD</h3><label>Tipo de cambio<input id="calcRate" type="number" min="0.01" step="0.01"></label><label>Bolivianos<input id="calcBs" type="number" min="0" step="0.01"></label><label>Dólares<input id="calcUsd" type="number" min="0" step="0.01"></label></article><article class="panel"><h3>Precio por m²</h3><label>Precio total Bs<input id="sqmPrice" type="number" min="0"></label><label>Superficie m²<input id="sqmArea" type="number" min="0.01"></label><output id="sqmResult" class="calc-result">Bs 0/m²</output></article><article class="panel"><h3>Comisión del asesor</h3><label>Monto de operación Bs<input id="commissionAmount" type="number" min="0"></label><label>Porcentaje<input id="commissionRate" type="number" min="0" max="100" step="0.1"></label><output id="commissionResult" class="calc-result">Bs 0</output></article><article class="panel"><h3>Cuota mensual estimada</h3><label>Monto del crédito Bs<input id="loanAmount" type="number" min="0"></label><label>Plazo (años)<input id="loanYears" type="number" min="1" step="1" value="20"></label><label>Tasa anual (%)<input id="loanRate" type="number" min="0" step="0.01" value="8"></label><output id="loanResult" class="calc-result">Bs 0/mes</output></article><article class="panel calculator-wide"><h3>Comparador de propiedades</h3><div class="compare-selects"><select id="compareA"></select><select id="compareB"></select></div><div id="compareResult" class="compare-table"></div></article></div></section>
-      <section id="libraryView" class="view"><div class="page-heading"><div><p class="eyebrow">Contenido reutilizable</p><h2>Biblioteca de prompts y respuestas</h2></div><button id="newLibraryButton" class="primary-button">+ Nuevo elemento</button></div><div class="toolbar panel"><label class="search-field"><span>⌕</span><input id="librarySearch" type="search" placeholder="Buscar en la biblioteca..."></label><select id="libraryCategoryFilter"><option value="">Todas las categorías</option><option>WhatsApp</option><option>Prompts IA</option><option>Objeciones</option><option>Seguimiento</option><option>Publicaciones</option><option>Documentos</option></select></div><div id="libraryList" class="library-grid"></div></section>
-      <section id="reportsView" class="view"><div class="page-heading"><div><p class="eyebrow">Análisis</p><h2>Reportes</h2></div><button id="printReportsButton" class="secondary-button">Imprimir reporte</button></div><article class="panel" id="metricsPanel"></article><div class="report-grid"><article class="panel"><h3>Clientes por etapa</h3><canvas id="stageChart" width="600" height="300"></canvas></article><article class="panel"><h3>Clientes por origen</h3><canvas id="sourceChart" width="600" height="300"></canvas></article><article class="panel"><h3>Propiedades por zona</h3><canvas id="zoneChart" width="600" height="300"></canvas></article><article class="panel"><h3>Cierres por mes</h3><canvas id="closureChart" width="600" height="300"></canvas></article></div></section>
-      <section id="backupView" class="view">
-        <div class="page-heading"><div><p class="eyebrow">Seguridad</p><h2>Copias de seguridad</h2></div></div>
-        <div class="content-grid two-columns">
-          <article class="panel">
-            <h3>Configuración del asesor</h3>
-<label>Tipo de cambio (Bs por USD)<input id="exchangeRate" type="number" min="0.01" step="0.01" /></label>
-<label>Nombre del asesor<input id="advisorName" /></label><label>Teléfono del asesor<input id="advisorPhone" inputmode="tel" /></label><label>Inmobiliaria<input id="advisorAgency" /></label><label>Comisión por defecto (%)<input id="defaultCommission" type="number" min="0" max="100" step="0.1" value="3" /></label><label>Prefijo del código (vacío = escribirlo siempre)<input id="codePrefix" maxlength="12" placeholder="PROP-" /></label><label>Días para alerta de seguimiento<input id="followUpDays" type="number" min="1" max="365" step="1" value="7" /></label>
-<button id="saveSettings" class="secondary-button">Guardar configuración</button><hr />
-<h3>Exportar información</h3><div id="backupReminder" class="backup-reminder"></div><p class="muted">Guarda todas tus propiedades, configuración y plantillas en un archivo JSON.</p>
-            <div class="button-row"><button class="primary-button" id="exportJsonButton">Descargar copia JSON</button><button class="secondary-button" id="shareAppButton">Compartir aplicación</button></div><button class="secondary-button" id="loadDemoButton">Cargar datos de ejemplo</button><button class="secondary-button danger-button" id="clearDemoButton">Limpiar todos los datos</button>
-            <hr />
-            <h3>Exportar a CSV</h3><p class="muted">Abre el archivo en Excel o Google Sheets.</p>
-            <div class="button-row"><button class="secondary-button" id="exportPropertiesCsvButton">Propiedades CSV</button><button class="secondary-button" id="exportClientsCsvButton">Clientes CSV</button></div>
-          </article>
-          <article class="panel">
-            <h3>Importar información</h3><p class="muted">Selecciona una copia JSON creada por esta app. Los datos actuales se reemplazarán.</p>
-            <label class="file-picker"><span>Seleccionar archivo JSON</span><input id="importJsonInput" type="file" accept="application/json,.json" /></label>
-            <p class="small muted" id="importStatus"></p>
-          </article>
-        </div>
-      </section>
-    </main>
-  </div>
-
-  <dialog id="clientDialog" class="modal-dialog"><form id="clientForm" method="dialog"><div class="modal-header"><div><p class="eyebrow">Mini CRM</p><h2 id="clientDialogTitle">Nuevo cliente</h2></div><button type="button" class="icon-button" id="closeClientDialog">×</button></div><input type="hidden" id="clientId" /><div class="form-grid"><label>Nombre completo*<input id="clientName" required maxlength="100" /></label><label>Teléfono / WhatsApp*<input id="clientPhone" required inputmode="tel" maxlength="25" /></label><label>Qué busca<input id="clientSearchNeed" maxlength="120" placeholder="Ej.: departamento de 2 dormitorios" /></label><label>Presupuesto máximo Bs<input id="clientBudget" type="number" min="0" step="0.01" /></label><label>Zona de interés<input id="clientZone" maxlength="80" /></label><label>Operación<select id="clientOperation"><option value="">Cualquiera</option><option value="venta">Venta</option><option value="alquiler">Alquiler</option><option value="anticretico">Anticrético</option></select></label><label>Tipo de inmueble<select id="clientPropertyType"><option value="">Cualquiera</option><option value="casa">Casa</option><option value="departamento">Departamento</option><option value="cuarto">Cuarto</option><option value="local">Local comercial</option><option value="terreno">Terreno</option><option value="oficina">Oficina</option></select></label><label>Dormitorios mínimos<input id="clientBedrooms" type="number" min="0" step="1" /></label><label>Origen<select id="clientSource"><option>Marketplace</option><option>Facebook</option><option>Instagram</option><option>TikTok</option><option>WhatsApp</option><option>Referido</option><option>Otro</option></select></label><label>Próximo seguimiento<input id="clientFollowUp" type="datetime-local" /></label><label>Etapa<select id="clientStatus"><option value="nuevo">Nuevo</option><option value="contactado">Contactado</option><option value="visita">Visita agendada</option><option value="negociando">Negociando</option><option value="cerrado">Cerrado</option><option value="perdido">Perdido</option></select></label><fieldset class="wide"><legend>Propiedades de interés</legend><div id="clientPropertyChoices" class="check-grid"></div></fieldset><label class="wide">Notas<textarea id="clientNotes" rows="4" maxlength="1000"></textarea></label><article class="wide"><h3>Propiedades que coinciden</h3><p class="small muted">Basadas en la ficha guardada. Guarda los cambios para actualizar.</p><div id="clientMatches"></div></article><article class="wide"><h3>Historial de interacciones</h3><div id="clientInteractionHistory" class="followup-list"></div></article></div><div class="modal-actions"><button type="button" class="secondary-button" id="cancelClientButton">Cancelar</button><button type="submit" class="primary-button">Guardar cliente</button></div></form></dialog>
-  <dialog id="interactionDialog" class="modal-dialog"><form id="interactionForm" method="dialog"><div class="modal-header"><div><p class="eyebrow">Historial</p><h2>Registrar interacción</h2></div><button type="button" class="icon-button" id="closeInteractionDialog">×</button></div><input type="hidden" id="interactionClientId" /><div class="form-grid"><label>Tipo<select id="interactionType"><option value="whatsapp">WhatsApp</option><option value="llamada">Llamada</option><option value="visita">Visita</option><option value="nota">Nota</option></select></label><label>Fecha y hora<input id="interactionDate" type="datetime-local" required /></label><label class="wide">Detalle<textarea id="interactionNote" rows="4" required maxlength="1000"></textarea></label></div><div class="modal-actions"><button type="button" class="secondary-button" id="cancelInteractionButton">Cancelar</button><button type="submit" class="primary-button">Guardar interacción</button></div></form></dialog>
-
-  <dialog id="onboardingDialog" class="modal-dialog onboarding-dialog"><form id="onboardingForm" method="dialog"><div class="modal-header"><div><p class="eyebrow">Primeros pasos</p><h2>Configura tu CRM</h2></div><button type="button" class="icon-button" id="closeOnboardingDialog">×</button></div><p class="muted">Completa estos datos una sola vez. Luego podrás modificarlos en Copias de seguridad.</p><div class="form-grid"><label>Tu nombre<input id="onboardingName" maxlength="100"></label><label>Teléfono / WhatsApp<input id="onboardingPhone" inputmode="tel" maxlength="25"></label><label>Inmobiliaria<input id="onboardingAgency" maxlength="120"></label><label>Tipo de cambio Bs/USD<input id="onboardingRate" type="number" min="0.01" step="0.01" value="6.96"></label><label>Comisión por defecto (%)<input id="onboardingCommission" type="number" min="0" max="100" step="0.1" value="3"></label><label>Días para seguimiento<input id="onboardingFollowDays" type="number" min="1" max="365" value="7"></label></div><div class="onboarding-check"><label><input type="checkbox" id="onboardingDemo"> Cargar datos de ejemplo para explorar la app</label></div><div class="modal-actions"><button type="button" class="secondary-button" id="skipOnboardingButton">Omitir por ahora</button><button type="submit" class="primary-button">Guardar y comenzar</button></div></form></dialog>
-  <dialog id="libraryDialog" class="modal-dialog"><form id="libraryForm" method="dialog"><div class="modal-header"><h2 id="libraryDialogTitle">Nuevo elemento</h2><button type="button" class="icon-button" id="closeLibraryDialog">×</button></div><input id="libraryId" type="hidden"><div class="form-grid"><label>Título*<input id="libraryTitle" required maxlength="120"></label><label>Categoría<select id="libraryCategory"><option>WhatsApp</option><option>Prompts IA</option><option>Objeciones</option><option>Seguimiento</option><option>Publicaciones</option><option>Documentos</option></select></label><label class="wide">Contenido*<textarea id="libraryContent" rows="8" required maxlength="5000" placeholder="Puedes usar variables como {nombre}, {zona}, {precio}..."></textarea></label></div><div class="modal-actions"><button type="button" class="secondary-button" id="cancelLibraryButton">Cancelar</button><button type="submit" class="primary-button">Guardar</button></div></form></dialog>
-  <dialog id="ownerDialog" class="modal-dialog"><form id="ownerForm" method="dialog"><div class="modal-header"><h2 id="ownerDialogTitle">Nuevo propietario</h2><button type="button" class="icon-button" id="closeOwnerDialog">×</button></div><input id="ownerId" type="hidden" /><div class="form-grid"><label>Nombre completo*<input id="ownerNameForm" required maxlength="120" /></label><label>Teléfono*<input id="ownerPhoneForm" required inputmode="tel" maxlength="25" /></label><label>Correo electrónico<input id="ownerEmail" type="email" maxlength="120" /></label><label>Etapa<select id="ownerStage"><option value="contacted">Contactado</option><option value="meeting">Reunión</option><option value="documents">Documentos pendientes</option><option value="signed">Contrato firmado</option><option value="lost">No captado</option></select></label><label>Próxima fecha<input id="ownerNextDate" type="date" /></label><label class="wide">Notas<textarea id="ownerNotes" rows="3" maxlength="1000"></textarea></label><fieldset class="wide"><legend>Propiedades del propietario</legend><div id="ownerPropertyChoices" class="check-grid"></div></fieldset></div><div class="modal-actions"><button type="button" class="secondary-button" id="cancelOwnerButton">Cancelar</button><button type="submit" class="primary-button">Guardar propietario</button></div></form></dialog>
-  <dialog id="closureDialog" class="modal-dialog"><form id="closureForm" method="dialog"><div class="modal-header"><h2>Registrar cierre</h2><button type="button" class="icon-button" id="closeClosureDialog">×</button></div><input id="closureId" type="hidden" /><div class="form-grid"><label>Propiedad*<select id="closureProperty" required></select></label><label>Cliente*<select id="closureClient" required></select></label><label>Monto de operación (Bs)*<input id="closureAmount" type="number" min="0" step="0.01" required /></label><label>Fecha*<input id="closureDate" type="date" required /></label><label>Comisión (%)<input id="closureRate" type="number" min="0" max="100" step="0.1" required /></label><label>Estado de cobro<select id="closurePaid"><option value="false">Pendiente</option><option value="true">Cobrado</option></select></label><label class="wide">Notas<textarea id="closureNotes" rows="3" maxlength="1000"></textarea></label></div><div class="modal-actions"><button type="button" class="secondary-button" id="cancelClosureButton">Cancelar</button><button type="submit" class="primary-button">Guardar cierre</button></div></form></dialog>
-  <dialog id="visitDialog" class="modal-dialog"><form id="visitForm" method="dialog">
-    <div class="modal-header"><h2 id="visitTitle">Agendar visita</h2><button type="button" id="closeVisitDialog" class="icon-button" aria-label="Cerrar visita">×</button></div><input id="visitId" type="hidden" />
-    <div class="form-grid"><label>Cliente*<select id="visitClient" required></select></label><label>Propiedad*<select id="visitProperty" required></select></label><label>Fecha y hora*<input id="visitAt" type="datetime-local" required /></label><label>Duración (minutos)<input id="visitDuration" type="number" min="15" max="480" step="15" value="60" required /></label><label>Aviso previo (minutos)<input id="visitReminderMinutes" type="number" min="0" max="1440" value="30" required /></label><label>Estado<select id="visitStatus"><option value="scheduled">Agendada</option><option value="completed">Realizada</option><option value="cancelled">Cancelada</option></select></label><label>Resultado<select id="visitResult"><option value="">Sin resultado</option><option value="liked">Le gustó</option><option value="disliked">No le gustó</option><option value="negotiate">Quiere negociar</option></select></label><label class="wide">Notas<textarea id="visitNotes" maxlength="2000" rows="3"></textarea></label><fieldset class="wide"><legend>Checklist durante la visita</legend><div id="visitChecklist" class="check-grid"></div></fieldset></div>
-    <p class="small muted">Los resultados actualizan al cliente: le gustó → contactado; no le gustó → contactado para buscar alternativas; quiere negociar → negociando. Cancelar conserva la etapa actual.</p>
-    <div class="modal-actions"><button type="button" id="deleteVisitButton" class="secondary-button">Eliminar</button><button type="button" id="cancelVisitButton" class="secondary-button">Cancelar</button><button type="submit" class="primary-button">Guardar visita</button></div>
-  </form></dialog>
-  <dialog id="propertyDialog" class="modal-dialog">
-    <form id="propertyForm" method="dialog">
-      <div class="modal-header"><div><p class="eyebrow">Ficha inmobiliaria</p><h2 id="propertyDialogTitle">Nueva propiedad</h2></div><button type="button" class="icon-button" id="closePropertyDialog">×</button></div>
-      <input type="hidden" id="propertyId" />
-      <div class="form-grid">
-        <label>Operación*<select id="operation" required><option value="venta">Venta</option><option value="alquiler">Alquiler</option><option value="anticretico">Anticrético</option></select></label>
-        <label>Tipo de inmueble*<select id="propertyType" required><option value="casa">Casa</option><option value="departamento">Departamento</option><option value="cuarto">Cuarto</option><option value="local">Local comercial</option><option value="terreno">Terreno</option><option value="oficina">Oficina</option></select></label>
-        <label>Zona/barrio*<input id="zone" required maxlength="80" /></label>
-        <label>Dirección*<input id="address" required maxlength="120" /></label>
-        <label class="wide">Referencia (cerca de qué)<input id="reference" maxlength="120" /></label>
-        <label>Precio en Bs*<input id="priceBs" required type="number" min="0" step="0.01" /></label>
-        <label>Precio en USD<input id="priceUsd" type="number" min="0" step="0.01" /></label>
-        <label>Dormitorios<input id="bedrooms" type="number" min="0" step="1" /></label>
-        <label>Baños<input id="bathrooms" type="number" min="0" step="1" /></label>
-        <label>m² de terreno<input id="landArea" type="number" min="0" step="0.01" /></label>
-        <label>m² construidos<input id="builtArea" type="number" min="0" step="0.01" /></label>
-        <label>Piso<input id="floor" maxlength="20" /></label>
-        <label>Estado<select id="status"><option value="disponible">Disponible</option><option value="reservado">Reservado</option><option value="vendido">Vendido/alquilado</option></select></label>
-        <label>Código interno*<input id="code" required maxlength="30" /></label>
-        <label>Propietario<input id="ownerName" maxlength="100" /></label>
-        <label>Contacto propietario<input id="ownerPhone" inputmode="tel" maxlength="30" /></label>
-        <fieldset class="wide"><legend>Servicios</legend><div class="check-grid"><label><input type="checkbox" id="serviceWater" /> Agua</label><label><input type="checkbox" id="serviceElectricity" /> Luz</label><label><input type="checkbox" id="serviceGas" /> Gas</label><label><input type="checkbox" id="serviceInternet" /> Internet</label><label><input type="checkbox" id="furnished" /> Amoblado</label></div></fieldset>
-        <label class="wide">Notas<textarea id="notes" rows="4" maxlength="1000"></textarea></label>
-        <label class="wide">Fotos <span class="muted small">Se comprimen y guardan en este navegador.</span><input id="photos" type="file" accept="image/*" multiple /></label>
-        <fieldset class="wide"><legend>Documentación editable</legend><div id="documentChecklist"></div><button type="button" id="addDocument" class="secondary-button">+ Documento</button></fieldset>
-<article class="wide"><h3>Clientes que podrían interesarse</h3><div id="propertyMatches"></div></article><article class="wide"><h3>Historial de precios</h3><div id="priceHistoryView"></div></article>
-<div id="photoPreview" class="photo-preview wide"></div>
+        <button type="button" class="danger full" id="deleteClient" hidden>Eliminar cliente</button>
       </div>
-      <div class="modal-actions"><button type="button" class="secondary-button" id="cancelPropertyButton">Cancelar</button><button type="submit" class="primary-button">Guardar propiedad</button></div>
+    </form>
+  </dialog>
+
+  <!-- VISITA -->
+  <dialog id="visitDialog" class="sheet">
+    <form id="visitForm" method="dialog">
+      <header class="sheet-head"><button type="button" class="ghost" data-close>✕</button><h2 id="visitTitle">Nueva visita</h2><button type="submit" class="primary small">Guardar</button></header>
+      <div class="sheet-body">
+        <input type="hidden" id="vId" />
+        <label>Cliente*<select id="vClient" required></select></label>
+        <label>Código de propiedad*<input id="vCode" required placeholder="DOM-000001 o solo 1" maxlength="12" /></label>
+        <label>Fecha y hora*<input id="vDate" type="datetime-local" required /></label>
+        <label>Estado<select id="vStatus"><option value="programada">Programada</option><option value="realizada">Realizada</option><option value="no_asistio">No asistió</option><option value="cancelada">Cancelada</option></select></label>
+        <label>Notas / resultado<textarea id="vNote" rows="3" maxlength="1000"></textarea></label>
+        <button type="button" class="danger full" id="deleteVisit" hidden>Eliminar visita</button>
+      </div>
     </form>
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <section id="printSheet" aria-label="Ficha imprimible"></section><script src="app.js"></script><script src="stage3.js"></script><script src="stage4.js"></script><script src="stage5.js"></script><script src="stage6.js"></script><script src="firebase.js"></script>
-<script>(function(){const n=document.querySelector('.main-nav'),m=document.getElementById('moreNav');if(!n||!m)return;m.onclick=()=>{const o=n.classList.toggle('open');m.setAttribute('aria-expanded',o);};n.addEventListener('click',e=>{if(e.target.closest('.nav-button[data-view]'))n.classList.remove('open');});})();</script></body>
+
+  <script src="app.js"></script>
+  <script src="firebase.js"></script>
+</body>
 </html>

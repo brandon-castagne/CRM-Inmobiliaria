@@ -3,7 +3,6 @@
    - El SDK de Firebase solo se descarga si la app está configurada.
    - Al abrir la app se lee 1 documento pequeño (meta/sync); solo si hubo cambios
      en otro dispositivo se descargan los registros modificados desde la última vez.
-   - Las fotos se guardan por su huella (hash): cada foto se sube y se baja una sola vez.
    - Al guardar solo se suben los registros que cambiaron. */
 const firebaseConfig={apiKey:"PEGAR",authDomain:"PEGAR",projectId:"PEGAR",appId:"PEGAR"};
 (function(){
@@ -22,27 +21,18 @@ if(bar){bar.appendChild(dot);bar.appendChild(btn);}
 setS('#9aa0a6','Sin sesión: solo local');
 
 // --- Utilidades ---
-const COLS=['clients','owners','visits','closures','properties'];
+const COLS=['clients','visits'];
 const LS={uid:'crm_fb_uid',snap:'crm_fb_snap',since:'crm_fb_since'};
 const lsGet=(k,f)=>{try{const v=localStorage.getItem(k);return v==null?f:JSON.parse(v);}catch(e){return f;}};
 const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){console.warn('No se pudo guardar el estado de sincronización',e);}};
 function hash(str){let h1=0xdeadbeef,h2=0x41c6ce57;for(let i=0;i<str.length;i++){const c=str.charCodeAt(i);h1=Math.imul(h1^c,2654435761);h2=Math.imul(h2^c,1597334677);}h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);return (h2>>>0).toString(36)+(h1>>>0).toString(36);}
-const photoHashCache=new Map();
-const photoHash=v=>{let h=photoHashCache.get(v);if(!h){h=hash(v);photoHashCache.set(v,h);}return h;};
 const split=k=>{const i=k.indexOf('/');return [k.slice(0,i),k.slice(i+1)];};
 
-/* Convierte los datos locales en documentos de Firestore: clave -> {doc, h}.
-   La propiedad guarda la lista de huellas de sus fotos (ph); cada foto vive en photos/{huella}. */
+/* Convierte los datos locales en documentos de Firestore: clave -> {doc, h}. */
 function explode(d){
   const out={},rest={...d};COLS.forEach(c=>delete rest[c]);
   const mj=JSON.stringify(rest);out['meta/main']={doc:{json:mj},h:hash(mj)};
-  ['clients','owners','visits','closures'].forEach(c=>(d[c]||[]).forEach(r=>{if(!r||!r.id)return;const j=JSON.stringify(r);out[c+'/'+r.id]={doc:{json:j},h:hash(j)};}));
-  (d.properties||[]).forEach(r=>{
-    if(!r||!r.id)return;
-    const {photos=[],...p}=r,ph=photos.map(photoHash);
-    const j=JSON.stringify({...p,ph});out['properties/'+r.id]={doc:{json:j},h:hash(j)};
-    photos.forEach((v,i)=>{out['photos/'+ph[i]]={doc:{v},h:'1',size:v.length};});
-  });
+  COLS.forEach(c=>(d[c]||[]).forEach(r=>{if(!r||!r.id)return;const j=JSON.stringify(r);out[c+'/'+r.id]={doc:{json:j},h:hash(j),size:j.length};}));
   return out;
 }
 const hasLocal=d=>COLS.some(c=>(d[c]||[]).length);
@@ -58,16 +48,16 @@ async function push(){
   if(busy){again=true;return;}
   busy=true;
   try{
-    const now=explode(data),photoOps=[],docOps=[],orphanOps=[];
-    for(const k in now)if(snap[k]!==now[k].h)(k.startsWith('photos/')?photoOps:docOps).push(['set',k,now[k]]);
-    for(const k in snap)if(!(k in now))(k.startsWith('photos/')?orphanOps:docOps).push([k==='meta/main'?'skip':'del',k]);
-    if(photoOps.length||docOps.length||orphanOps.length)setS('#f9ab00','Sincronizando…');
+    const now=explode(data),docOps=[];
+    for(const k in now)if(snap[k]!==now[k].h)docOps.push(['set',k,now[k]]);
+    for(const k in snap)if(!(k in now))docOps.push([k==='meta/main'?'skip':'del',k]);
+    if(docOps.length)setS('#f9ab00','Sincronizando…');
     // Lotes de máx. 400 operaciones o ~7 MB (límite de Firestore: 10 MB por envío).
-    const run=async(ops,withSync)=>{
+    const run=async ops=>{
       let b=db.batch(),n=0,bytes=0,pending=[];
       const flush=async()=>{
         if(!n)return;
-        if(withSync)b.set(col('meta').doc('sync'),{r:TS()});
+        b.set(col('meta').doc('sync'),{r:TS()});
         await b.commit();
         pending.forEach(([t,k,v])=>{t==='set'?snap[k]=v.h:delete snap[k];});
         lsSet(LS.snap,snap);
@@ -77,16 +67,13 @@ async function push(){
         const [t,k,v]=op;if(t==='skip')continue;
         const size=v&&v.size?v.size:2000;
         if(n&&(n>=400||bytes+size>7e6))await flush();
-        if(t==='set')b.set(ref(k),k.startsWith('photos/')?v.doc:{...v.doc,r:TS()});
-        else if(k.startsWith('photos/'))b.delete(ref(k));
+        if(t==='set')b.set(ref(k),{...v.doc,r:TS()});
         else b.set(ref(k),{del:true,r:TS()}); // marca de borrado para los demás dispositivos
         n++;bytes+=size;pending.push(op);
       }
       await flush();
     };
-    await run(photoOps,false);   // primero las fotos, para que nunca falte una foto referenciada
-    await run(docOps,true);
-    await run(orphanOps,false);  // fotos que ya no usa ninguna propiedad
+    await run(docOps);
     setS('#188038','Sincronizado '+new Date().toLocaleString('es-BO'));
   }catch(e){console.error(e);setS('#d93025','Error al sincronizar (se reintenta al guardar)');}
   busy=false;
@@ -100,7 +87,6 @@ function queue(){if(!uid)return;setS('#f9ab00','Sincronizando…');clearTimeout(
 async function pull(since,base,baseSnap,keepLocal){
   const d=JSON.parse(JSON.stringify(base)),snapOut={...baseSnap},local=explode(base);
   COLS.forEach(c=>{d[c]=d[c]||[];});
-  const localPhotos=new Map();(base.properties||[]).forEach(p=>(p.photos||[]).forEach(v=>localPhotos.set(photoHash(v),v)));
   const mine=k=>keepLocal||(local[k]?local[k].h:undefined)!==baseSnap[k];
   const after=firebase.firestore.Timestamp.fromMillis(since);
   let maxR=since,changed=false;
@@ -115,19 +101,9 @@ async function pull(since,base,baseSnap,keepLocal){
         delete snapOut[k];continue;
       }
       const h=hash(v.json);snapOut[k]=h;
-      if(c==='properties')(JSON.parse(v.json).ph||[]).forEach(p=>{snapOut['photos/'+p]='1';});
       if(mine(k)||(local[k]&&local[k].h===h))continue; // cambio local pendiente, o ya es igual
       if(c==='meta'){const keep={};COLS.forEach(n=>keep[n]=d[n]);Object.keys(d).forEach(n=>delete d[n]);Object.assign(d,JSON.parse(v.json),keep);changed=true;continue;}
-      let rec=JSON.parse(v.json);
-      if(c==='properties'){
-        const {ph=[],...p}=rec;p.photos=[];
-        for(const h of ph){
-          let img=localPhotos.get(h);
-          if(!img){const f=await col('photos').doc(h).get();if(f.exists){img=f.data().v;localPhotos.set(h,img);}}
-          if(img){p.photos.push(img);photoHashCache.set(img,h);}
-        }
-        rec=p;
-      }
+      const rec=JSON.parse(v.json);
       const i=d[c].findIndex(r=>r.id===rec.id);
       if(i>=0)d[c][i]=rec;else d[c].push(rec);
       changed=true;

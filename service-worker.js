@@ -1,5 +1,5 @@
-const CACHE='crm-inmobiliario-v8';
-const ASSETS=['./','./index.html','./styles.css','./app.js','./stage3.js','./stage4.js','./stage5.js','./stage6.js','./firebase.js','./manifest.json','./icon.svg','./icon-192.png','./icon-512.png','./icon-maskable-512.png','./apple-touch-icon.png'];
+const CACHE='crm-clientes-v9';
+const ASSETS=['./','./index.html','./styles.css','./app.js','./firebase.js','./manifest.json','./icon.svg','./icon-192.png','./icon-512.png','./icon-maskable-512.png','./apple-touch-icon.png'];
 const SDK='https://www.gstatic.com/firebasejs/';
 const SDK_CACHE='firebase-sdk-10.12.2'; // no se borra al publicar una versión nueva de la app
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));

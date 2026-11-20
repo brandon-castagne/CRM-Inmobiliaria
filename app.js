@@ -1,160 +1,398 @@
-/* Mi CRM Inmobiliario - Etapa 1. JavaScript puro, sin dependencias externas. */
-const STORAGE_KEY = 'crm_inmobiliario_data_v1';
-const DEFAULT_DATA = {version:1,settings:{exchangeRate:6.96,theme:'light',advisor:{name:'',phone:'',agency:''},followUpDays:7,defaultCommission:3},properties:[],clients:[],owners:[],visits:[],closures:[],templates:[],library:[],counters:{property:1,client:1,owner:1,visit:1,closure:1}};
-let data = loadData();
-let pendingPhotos = [];
-let pendingDocuments = [];
-let photoProcessing = false;
-function clone(value){ return JSON.parse(JSON.stringify(value)); }
-const newId = () => 'prop-' + (globalThis.crypto?.randomUUID?.() || Date.now() + '-' + Math.random().toString(36).slice(2));
-const validPhoto = value => typeof value === 'string' && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value);
-const defaultTemplate = '✨ {tipo} en {operacion} en {zona}\n📍 {referencia}\n{caracteristicas}\n💰 Precio: {precio}\n📲 Escríbeme para coordinar una visita.';
+'use strict';
+/* Mi CRM de Clientes — datos en localStorage; sincronización opcional en firebase.js */
+const APP_VERSION='2.0';
+const STORAGE_KEY='crm_clientes_v2';
+const STAGES=[['nuevo','Nuevo'],['contactado','Contactado'],['visita','Visita'],['negociando','Negociando'],['cerrado','Cerrado'],['perdido','Perdido']];
+const STAGE_LABEL=Object.fromEntries(STAGES);
+const ACTIVE_STAGES=['nuevo','contactado','visita','negociando'];
+const SOURCES=['Marketplace','Facebook','Instagram','TikTok','WhatsApp','Página de la empresa','Letrero','Referido','Cliente anterior','Otro'];
+const LOG_ICON={whatsapp:'💬',llamada:'📞',visita:'🏠',reunion:'🤝',nota:'📝',etapa:'➡️'};
+const PRIORITY_ORDER={caliente:0,tibia:1,fria:2};
+const DEFAULT_SETTINGS={name:'',rate:6.96,commission:3,followDays:3,greeting:'Hola {nombre}, ',autoLog:true};
 
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => [...document.querySelectorAll(selector)];
-const esc = (value='') => String(value).replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
-const operationLabel = value => ({venta:'Venta',alquiler:'Alquiler',anticretico:'Anticrético'}[value] || value);
-const typeLabel = value => ({casa:'Casa',departamento:'Departamento',cuarto:'Cuarto',local:'Local comercial',terreno:'Terreno',oficina:'Oficina'}[value] || value);
-const statusLabel = value => ({disponible:'Disponible',reservado:'Reservado',vendido:'Vendido/alquilado'}[value] || value);
-const money = value => `Bs ${Number(value || 0).toLocaleString('es-BO',{minimumFractionDigits:0,maximumFractionDigits:2})}`;
-const nowIso = () => new Date().toISOString();
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+const pad=n=>String(n).padStart(2,'0');
+const localISO=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const nowISO=()=>localISO(new Date());
+const todayStr=()=>nowISO().slice(0,10);
+const addDays=(n,hour=10)=>{const d=new Date();d.setDate(d.getDate()+n);d.setHours(hour,0,0,0);return localISO(d);};
 
-function loadData(){
-  try { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)); const d = saved ? {...DEFAULT_DATA,...saved,settings:{...DEFAULT_DATA.settings,...saved.settings}} : clone(DEFAULT_DATA); d.properties=(d.properties||[]).map(p=>({photos:[],documents:[],...p})); return d; }
-  catch(error){ console.warn('No se pudo leer la información guardada',error); return clone(DEFAULT_DATA); }
+/* ---------- Códigos DOM-000000 ---------- */
+function normalizeCode(raw){
+  const m=String(raw||'').trim().toUpperCase().match(/^(?:DOM)?\s*[-_ ]?\s*0*(\d{1,6})$/);
+  if(!m||+m[1]===0)return null;
+  return 'DOM-'+m[1].padStart(6,'0');
 }
-// Un fallo de cuota no se anuncia como un guardado correcto.
-// Fotos y documentos viven en IndexedDB (sin el límite de ~5 MB de localStorage); localStorage guarda solo los datos livianos.
-let mediaReady=false;const mediaSig=new Map();
-const sigOf=p=>(p.photos||[]).length+':'+(p.photos||[]).reduce((n,x)=>n+String(x).length,0)+':'+JSON.stringify(p.documents||[]).length;
-const slimData=d=>({...d,properties:d.properties.map(({photos,documents,...p})=>p)});
-function mediaDB(){return new Promise((res,rej)=>{const r=indexedDB.open('crm_media',1);r.onupgradeneeded=()=>r.result.createObjectStore('props');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
-async function mediaStore(props,force){
-  const db=await mediaDB();
-  await new Promise((res,rej)=>{
-    const tx=db.transaction('props','readwrite'),st=tx.objectStore('props'),keep=new Set(props.map(p=>p.id));
-    st.getAllKeys().onsuccess=e=>{e.target.result.forEach(k=>{if(!keep.has(k)){st.delete(k);mediaSig.delete(k);}});
-      props.forEach(p=>{const s=sigOf(p);if(force||mediaSig.get(p.id)!==s){st.put({photos:p.photos||[],documents:p.documents||[]},p.id);mediaSig.set(p.id,s);}});};
-    tx.oncomplete=res;tx.onerror=tx.onabort=()=>rej(tx.error);
-  });
+
+/* ---------- Datos ---------- */
+function emptyData(){return {settings:{...DEFAULT_SETTINGS},clients:[],visits:[]};}
+function sanitize(d){
+  const out=emptyData();
+  if(!d||typeof d!=='object')return out;
+  out.settings={...DEFAULT_SETTINGS,...(d.settings||{})};
+  out.clients=Array.isArray(d.clients)?d.clients.filter(c=>c&&c.id&&c.name):[];
+  out.clients.forEach(c=>{c.properties=Array.isArray(c.properties)?c.properties:[];c.log=Array.isArray(c.log)?c.log:[];c.tags=Array.isArray(c.tags)?c.tags:[];});
+  out.visits=Array.isArray(d.visits)?d.visits.filter(v=>v&&v.id):[];
+  return out;
 }
-async function mediaLoad(){
-  const db=await mediaDB();
-  return new Promise((res,rej)=>{const out={},c=db.transaction('props').objectStore('props').openCursor();c.onsuccess=()=>{const r=c.result;if(r){out[r.key]=r.value;r.continue();}else res(out);};c.onerror=()=>rej(c.error);});
-}
-async function hydrateMedia(){
-  try{
-    if(!window.indexedDB)return;
-    const stored=await mediaLoad();let legacy=false;
-    data.properties.forEach(p=>{if((p.photos&&p.photos.length)||(p.documents&&p.documents.length))legacy=true;else if(stored[p.id]){p.photos=stored[p.id].photos||[];p.documents=stored[p.id].documents||[];}});
-    await mediaStore(data.properties,legacy);
-    mediaReady=true;localStorage.setItem(STORAGE_KEY,JSON.stringify(slimData(data)));
-    if(typeof renderProperties==='function')renderProperties();
-    if(typeof updateDashboard==='function')updateDashboard();
-  }catch(error){console.warn('IndexedDB no disponible; se usa localStorage',error);}
-}
-async function replaceAllData(next){
-  if(mediaReady){await mediaStore(next.properties,true);localStorage.setItem(STORAGE_KEY,JSON.stringify(slimData(next)));}
-  else localStorage.setItem(STORAGE_KEY,JSON.stringify(next));
-}
-// Un fallo de cuota no se anuncia como un guardado correcto.
+function loadData(){try{return sanitize(JSON.parse(localStorage.getItem(STORAGE_KEY)));}catch(e){return emptyData();}}
+let data=loadData();
+window.mediaPromise=Promise.resolve(); // compatibilidad con firebase.js
 function saveData(){
-  try { localStorage.setItem(STORAGE_KEY,JSON.stringify(mediaReady?slimData(data):data)); $('#lastSavedLabel').textContent = `Guardado ${new Date().toLocaleString('es-BO')}`; }
-  catch(error){ alert('No se pudo guardar. Puede faltar espacio en el navegador. Exporta un respaldo y reduce las fotos. Tu ficha permanece abierta.'); throw error; }
-  if(mediaReady)mediaStore(data.properties).catch(e=>{console.error(e);alert('No se pudieron guardar las fotos en este navegador. Descarga un respaldo JSON.');});
+  try{localStorage.setItem(STORAGE_KEY,JSON.stringify(data));$('#lastSavedLabel').textContent='Guardado '+new Date().toLocaleTimeString('es-BO',{hour:'2-digit',minute:'2-digit'});}
+  catch(e){alert('No se pudo guardar en este dispositivo (sin espacio). Descarga un respaldo.');throw e;}
 }
-function commit(next){ const previous=data; data=next; try {saveData();} catch(error){data=previous;return false;} return true; }
-function toast(message){ const node=$('#toast'); node.textContent=message; node.classList.add('show'); clearTimeout(window.toastTimer); window.toastTimer=setTimeout(()=>node.classList.remove('show'),2600); }
-function switchView(viewId){ $$('.view').forEach(view=>view.classList.toggle('active-view',view.id===viewId)); $$('.nav-button').forEach(button=>button.classList.toggle('active',button.dataset.view===viewId)); if(viewId==='propertiesView') renderProperties(); if(viewId==='publicationView') renderPublicationSelect(); if(viewId==='clientsView') renderClients(); if(viewId==='followupsView') renderFollowups(); if(viewId==='visitsView') renderVisits(); if(viewId==='ownersView' && typeof renderOwners==='function') renderOwners(); if(viewId==='closuresView' && typeof renderClosures==='function') renderClosures(); if(viewId==='reportsView' && typeof renderReports==='function') renderReports(); if(viewId==='calculatorsView' && typeof setupCalculators==='function') setupCalculators(); if(viewId==='libraryView' && typeof renderLibrary==='function') renderLibrary(); updateDashboard(); }
+async function replaceAllData(next){localStorage.setItem(STORAGE_KEY,JSON.stringify(sanitize(next)));}
+const S=()=>data.settings;
+const clientById=id=>data.clients.find(c=>c.id===id);
 
-function updateDashboard(){
-  const properties=data.properties; $('#statTotal').textContent=properties.length; if(typeof renderReports==='function')renderReports(); $('#statAvailable').textContent=properties.filter(p=>p.status==='disponible').length; $('#statSale').textContent=properties.filter(p=>p.operation==='venta').length; $('#statRent').textContent=properties.filter(p=>['alquiler','anticretico'].includes(p.operation)).length; const activeClients=data.clients.filter(c=>!['cerrado','perdido'].includes(c.status)); const pendingFollowups=data.clients.filter(c=>c.followUpAt&&new Date(c.followUpAt)<=new Date(Date.now()+86400000)&&!['cerrado','perdido'].includes(c.status)); $('#statClients').textContent=activeClients.length; $('#statFollowups').textContent=pendingFollowups.length;
-  const recent=[...properties].sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt)).slice(0,5); $('#recentProperties').innerHTML=recent.length?recent.map(p=>`<div class="compact-item"><span><strong>${esc(p.code)}</strong><br><small class="muted">${esc(p.zone)} · ${operationLabel(p.operation)}</small></span><strong>${money(p.priceBs)}</strong></div>`).join(''):'<p class="empty-state">Todavía no hay propiedades.</p>';
+/* ---------- Formatos ---------- */
+const dtf=new Intl.DateTimeFormat('es-BO',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+const df=new Intl.DateTimeFormat('es-BO',{day:'numeric',month:'short',year:'numeric'});
+const tf=new Intl.DateTimeFormat('es-BO',{hour:'2-digit',minute:'2-digit'});
+function dayDiff(iso){const a=new Date(iso);a.setHours(0,0,0,0);const b=new Date();b.setHours(0,0,0,0);return Math.round((a-b)/864e5);}
+function whenLabel(iso){
+  if(!iso)return '';
+  const d=dayDiff(iso),t=tf.format(new Date(iso));
+  if(d===0)return 'Hoy '+t;if(d===1)return 'Mañana '+t;if(d===-1)return 'Ayer '+t;
+  if(d<0&&d>=-7)return `Hace ${-d} días`;if(d>0&&d<7)return dtf.format(new Date(iso));
+  return df.format(new Date(iso));
+}
+const money=(n,cur)=>(cur==='Bs'?'Bs ':'$us ')+Number(n||0).toLocaleString('es-BO',{maximumFractionDigits:0});
+const initials=n=>n.trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase();
+function followState(c){
+  if(!c.followUp||!ACTIVE_STAGES.includes(c.stage))return null;
+  const due=new Date(c.followUp);
+  if(due<new Date()&&dayDiff(c.followUp)<0)return 'late';
+  if(dayDiff(c.followUp)===0)return due<new Date()?'late':'today';
+  return 'future';
 }
 
-function renderProperties(){
-  const query=$('#propertySearch').value.trim().toLowerCase(), operation=$('#operationFilter').value, status=$('#statusFilter').value, sort=$('#propertySort').value;
-  let list=data.properties.filter(p=>{ const hay=[p.code,p.zone,p.address,p.reference,p.ownerName].join(' ').toLowerCase(); return (!$('#zoneFilter').value||p.zone.toLowerCase().includes($('#zoneFilter').value.toLowerCase()))&&(!$('#typeFilter').value||p.propertyType===$('#typeFilter').value)&&(!$('#minPrice').value||p.priceBs>=Number($('#minPrice').value))&&(!$('#maxPrice').value||p.priceBs<=Number($('#maxPrice').value))&&(!query||hay.includes(query))&&(!operation||p.operation===operation)&&(!status||p.status===status); });
-  list.sort((a,b)=>sort==='priceAsc'?a.priceBs-b.priceBs:sort==='priceDesc'?b.priceBs-a.priceBs:sort==='zone'?a.zone.localeCompare(b.zone):new Date(b.updatedAt)-new Date(a.updatedAt));
-  $('#propertiesList').innerHTML=list.length?list.map(propertyCard).join(''):'<div class="panel empty-state"><p>No encontramos propiedades con esos filtros.</p><button class="primary-button" data-action="new-property">Registrar primera propiedad</button></div>';
-  $$('#propertiesList [data-action]').forEach(button=>button.addEventListener('click',handleAction));
+/* ---------- Teléfonos (Bolivia) ---------- */
+function waNumber(phone){let d=String(phone||'').replace(/\D/g,'');if(d.startsWith('00'))d=d.slice(2);if(d.length===8&&/^[67]/.test(d))d='591'+d;return d;}
+function waLink(c){const first=(c.name||'').trim().split(/\s+/)[0]||'';const text=(S().greeting||'').replace(/\{nombre\}/g,first);return `https://wa.me/${waNumber(c.phone)}${text?'?text='+encodeURIComponent(text):''}`;}
+const telLink=p=>'tel:'+String(p||'').replace(/[^\d+]/g,'');
+const samePhone=(a,b)=>{const x=waNumber(a),y=waNumber(b);return x&&y&&x.slice(-8)===y.slice(-8);};
+
+/* ---------- Toast ---------- */
+let toastTimer;
+function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2600);}
+
+/* ---------- Navegación ---------- */
+let currentView='todayView';
+function showView(id){
+  currentView=id;
+  $$('.view').forEach(v=>v.classList.toggle('active',v.id===id));
+  $$('.tabbar button').forEach(b=>b.classList.toggle('on',b.dataset.view===id));
+  $('#fab').hidden=!(id==='todayView'||id==='clientsView');
+  render();window.scrollTo(0,0);
 }
-function propertyCard(p){
-  const cover=p.photos?.find(validPhoto); const style=cover?`style="background-image:url('${cover}')"`:'';
-  return `<article class="property-card"><div class="property-photo" ${style}>${cover?'':'⌂'}</div><div class="property-card-body"><div class="panel-heading"><span class="badge">${statusLabel(p.status)}</span><span class="small muted">${esc(p.code)}</span></div><h3>${esc(typeLabel(p.propertyType))} en ${esc(p.zone)}</h3><p class="muted small">${esc(p.address)}</p><p class="property-price">${money(p.priceBs)}${p.priceUsd?` · USD ${Number(p.priceUsd).toLocaleString('en-US')}`:''}</p><div class="property-meta"><span>${operationLabel(p.operation)}</span><span>•</span><span>${p.bedrooms||0} dorm.</span><span>•</span><span>${p.bathrooms||0} baños</span></div><div class="card-actions"><button class="secondary-button" data-action="print-property" data-id="${esc(p.id)}">Ficha / PDF</button><button class="secondary-button" data-action="edit-property" data-id="${esc(p.id)}">Editar</button><button class="secondary-button" data-action="duplicate-property" data-id="${esc(p.id)}">Duplicar</button><button class="secondary-button" data-action="publish-property" data-id="${esc(p.id)}">Publicar</button><button class="secondary-button" data-action="delete-property" data-id="${esc(p.id)}">Borrar</button></div></div></article>`;
+
+/* ---------- Render general ---------- */
+function render(){
+  if(currentView==='todayView')renderToday();
+  else if(currentView==='clientsView')renderClients();
+  else if(currentView==='visitsView')renderVisits();
+  else if(currentView==='statsView')renderStats();
+  else if(currentView==='settingsView')renderSettings();
+}
+function clientItem(c,extra=''){
+  const fs=followState(c);
+  const badge=fs==='late'?'<span class="badge late">Atrasado</span>':fs==='today'?'<span class="badge today">Hoy</span>':'';
+  const want=[c.operation&&({venta:'Compra',alquiler:'Alquiler',anticretico:'Anticrético'}[c.operation]),c.type,c.zone,c.budget&&money(c.budget,c.currency)].filter(Boolean).join(' · ');
+  return `<div class="item" data-client="${c.id}">
+    <div class="avatar">${esc(initials(c.name))}<i class="p-${esc(c.priority||'tibia')}"></i></div>
+    <div class="item-main"><strong>${esc(c.name)}</strong>
+      <small>${badge}<span class="badge">${esc(STAGE_LABEL[c.stage]||'')}</span>${extra||esc(want||c.phone)}</small></div>
+    <div class="item-actions"><a class="round wa" href="${waLink(c)}" target="_blank" rel="noopener" data-contact="whatsapp" data-id="${c.id}" aria-label="WhatsApp">💬</a><a class="round" href="${telLink(c.phone)}" data-contact="llamada" data-id="${c.id}" aria-label="Llamar">📞</a></div>
+  </div>`;
+}
+const emptyMsg=t=>`<div class="empty">${t}</div>`;
+const kpi=(label,value,cls='')=>`<div class="kpi ${cls}"><span>${label}</span><strong>${value}</strong></div>`;
+
+function renderToday(){
+  const active=data.clients.filter(c=>ACTIVE_STAGES.includes(c.stage));
+  const late=active.filter(c=>followState(c)==='late').sort((a,b)=>a.followUp.localeCompare(b.followUp));
+  const today=active.filter(c=>followState(c)==='today').sort((a,b)=>a.followUp.localeCompare(b.followUp));
+  const fresh=data.clients.filter(c=>c.stage==='nuevo'&&!c.log.some(l=>l.type!=='etapa')).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  const now=nowISO(),week=addDays(7,23);
+  const visits=data.visits.filter(v=>v.status==='programada'&&v.date>=now.slice(0,10)&&v.date<=week).sort((a,b)=>a.date.localeCompare(b.date));
+  $('#todayKpis').innerHTML=kpi('Clientes activos',active.length)+kpi('Atrasados',late.length,late.length?'alert':'')+kpi('Para hoy',today.length)+kpi('Visitas 7 días',visits.length);
+  $('#overdueList').innerHTML=late.map(c=>clientItem(c,esc(whenLabel(c.followUp)))).join('')||emptyMsg('¡Al día! No tienes seguimientos atrasados.');
+  $('#todayList').innerHTML=today.map(c=>clientItem(c,esc(whenLabel(c.followUp)))).join('')||emptyMsg('Nada programado para hoy.');
+  $('#upcomingVisits').innerHTML=visits.map(visitItem).join('')||emptyMsg('Sin visitas programadas esta semana.');
+  $('#newList').innerHTML=fresh.slice(0,10).map(c=>clientItem(c)).join('')||emptyMsg('Todos tus clientes nuevos ya fueron contactados.');
 }
 
-function openPropertyDialog(property=null){
-  $('#propertyDialogTitle').textContent=property?'Editar propiedad':'Nueva propiedad'; $('#propertyId').value=property?.id||''; $('#operation').value=property?.operation||'venta'; $('#propertyType').value=property?.propertyType||'casa'; $('#zone').value=property?.zone||''; $('#address').value=property?.address||''; $('#reference').value=property?.reference||''; $('#priceBs').value=property?.priceBs??''; $('#priceUsd').value=property?.priceUsd??''; $('#bedrooms').value=property?.bedrooms??''; $('#bathrooms').value=property?.bathrooms??''; $('#landArea').value=property?.landArea??''; $('#builtArea').value=property?.builtArea??''; $('#floor').value=property?.floor||''; $('#status').value=property?.status||'disponible'; $('#code').value=property?.code||nextCode(); $('#ownerName').value=property?.ownerName||''; $('#ownerPhone').value=property?.ownerPhone||''; $('#serviceWater').checked=!!property?.services?.water; $('#serviceElectricity').checked=!!property?.services?.electricity; $('#serviceGas').checked=!!property?.services?.gas; $('#serviceInternet').checked=!!property?.services?.internet; $('#furnished').checked=!!property?.furnished; $('#notes').value=property?.notes||''; pendingPhotos=[...(property?.photos||[])]; pendingDocuments=clone(property?.documents?.length?property.documents:['Folio real','Impuestos al día','Plano','Carnet del propietario'].map(name=>({name,checked:false}))); renderDocuments(); renderHistory(property); renderPhotoPreview(); renderPropertyMatches(property); $('#propertyDialog').showModal(); }
-function closePropertyDialog(){ if(photoProcessing){toast('Espera a que terminen las fotos');return;} $('#propertyDialog').close(); pendingPhotos=[]; }
-function nextCode(){ const prefix=data.settings.codePrefix??'PROP-'; if(!prefix)return ''; let n=Number(data.counters.property)||1; while(data.properties.some(p=>p.code.toLowerCase()===`${prefix}${String(n).padStart(3,'0')}`.toLowerCase()))n++; return `${prefix}${String(n).padStart(3,'0')}`; }
-function fieldNumber(id){ if($(id).value==='')return null; const value=Number($(id).value); return Number.isFinite(value)&&value>=0?value:0; }
-function saveProperty(event){
-  event.preventDefault(); if(photoProcessing){toast('Espera a que terminen las fotos');return;} if(!$('#propertyForm').reportValidity())return; if(!validateForm())return; const id=$('#propertyId').value; const existing=data.properties.find(p=>p.id===id); const timestamp=nowIso(); const property={...existing,id:id||newId(),code:$('#code').value.trim(),operation:$('#operation').value,propertyType:$('#propertyType').value,zone:$('#zone').value.trim(),address:$('#address').value.trim(),reference:$('#reference').value.trim(),priceBs:fieldNumber('#priceBs'),priceUsd:fieldNumber('#priceUsd'),bedrooms:fieldNumber('#bedrooms'),bathrooms:fieldNumber('#bathrooms'),landArea:fieldNumber('#landArea'),builtArea:fieldNumber('#builtArea'),floor:$('#floor').value.trim(),status:$('#status').value,ownerName:$('#ownerName').value.trim(),ownerPhone:$('#ownerPhone').value.trim(),services:{water:$('#serviceWater').checked,electricity:$('#serviceElectricity').checked,gas:$('#serviceGas').checked,internet:$('#serviceInternet').checked},furnished:$('#furnished').checked,notes:$('#notes').value.trim(),photos:[...pendingPhotos],documents:clone(pendingDocuments),priceHistory:clone(existing?.priceHistory||[]),createdAt:existing?.createdAt||timestamp,updatedAt:timestamp};
-  if(existing && (existing.priceBs!==property.priceBs||existing.priceUsd!==property.priceUsd)) property.priceHistory.push({priceBs:property.priceBs,priceUsd:property.priceUsd,date:timestamp});
-  const next=clone(data); if(existing){next.properties=next.properties.map(item=>item.id===id?property:item);}else{property.priceHistory=[{priceBs:property.priceBs,priceUsd:property.priceUsd,date:timestamp}];next.properties.push(property);next.counters.property++;}
-  if(!commit(next))return; closePropertyDialog(); renderProperties(); updateDashboard(); toast('Propiedad guardada correctamente');
+function matchesQuery(c,q){
+  if(!q)return true;
+  const code=normalizeCode(q);
+  if(code&&c.properties.some(p=>p.code===code))return true;
+  const digits=q.replace(/\D/g,'');
+  if(digits.length>=4&&(waNumber(c.phone).includes(digits)||waNumber(c.phone2).includes(digits)))return true;
+  const hay=[c.name,c.zone,c.notes,c.type,c.source,...c.tags,...c.properties.map(p=>p.code+' '+(p.note||''))].join(' ').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  return q.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').split(/\s+/).every(w=>hay.includes(w));
 }
-function duplicateProperty(id){const original=data.properties.find(p=>p.id===id);if(!original)return;const next=clone(data),copy=clone(original);copy.id=newId();copy.code=(()=>{let c=nextCode()||copy.code+'-copia';while(data.properties.some(p=>p.code.toLowerCase()===c.toLowerCase()))c+='-2';return c;})();copy.createdAt=copy.updatedAt=nowIso();next.properties.push(copy);next.counters.property++;if(commit(next)){renderProperties();updateDashboard();toast('Propiedad duplicada');}}
-function deleteProperty(id){const p=data.properties.find(p=>p.id===id);if(!p||!confirm(`¿Borrar ${p.code}?`))return;const next=clone(data);next.properties=next.properties.filter(p=>p.id!==id);if(commit(next)){renderProperties();updateDashboard();toast('Propiedad borrada');}}
-
-async function compressImage(file){ return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>{const image=new Image();image.onload=()=>{const max=1100,scale=Math.min(1,max/Math.max(image.width,image.height)),canvas=document.createElement('canvas');canvas.width=Math.round(image.width*scale);canvas.height=Math.round(image.height*scale);canvas.getContext('2d').drawImage(image,0,0,canvas.width,canvas.height);const webp=canvas.toDataURL('image/webp',.7);resolve(webp.startsWith('data:image/webp')?webp:canvas.toDataURL('image/jpeg',.72));};image.onerror=reject;image.src=reader.result;};reader.onerror=reject;reader.readAsDataURL(file);}); }
-async function handlePhotoSelection(event){ const files=[...event.target.files];photoProcessing=true;const submit=$('#propertyForm [type="submit"]');submit.disabled=true;try{for(const file of files){if(!file.type.startsWith('image/')||file.size>15*1024*1024){toast('Solo imágenes de hasta 15 MB');continue;}if(pendingPhotos.length>=12){toast('Máximo 12 fotos por ficha');break;}try{pendingPhotos.push(await compressImage(file));}catch(error){toast('Imagen no compatible');}}renderPhotoPreview();}finally{photoProcessing=false;submit.disabled=false;event.target.value='';}}
-function renderPhotoPreview(){ $('#photoPreview').innerHTML=pendingPhotos.filter(validPhoto).map((photo,index)=>`<div><img src="${photo}" alt="Foto ${index+1}"><button type="button" class="copy-button" data-photo-index="${index}">Quitar</button></div>`).join(''); $$('#photoPreview [data-photo-index]').forEach(button=>button.addEventListener('click',()=>{pendingPhotos.splice(Number(button.dataset.photoIndex),1);renderPhotoPreview();})); }
-
-function renderPublicationSelect(selectedId=''){ const select=$('#publicationPropertySelect'); select.innerHTML='<option value="">Seleccionar propiedad...</option>'+data.properties.map(p=>`<option value="${esc(p.id)}" ${p.id===selectedId?'selected':''}>${esc(p.code)} · ${esc(p.propertyType)} en ${esc(p.zone)}</option>`).join(''); if(selectedId)select.value=selectedId; updatePublicationSummary(); }
-function getPublicationProperty(){ return data.properties.find(p=>p.id===$('#publicationPropertySelect').value); }
-function tokens(p){return {tipo:typeLabel(p.propertyType),operacion:operationLabel(p.operation).toLowerCase(),zona:p.zone,direccion:p.address,referencia:p.reference||'',precio:p.priceBs?money(p.priceBs):p.priceUsd?`USD ${p.priceUsd}`:'Consultar precio',dormitorios:p.bedrooms??'',banos:p.bathrooms??'',areaConstruida:p.builtArea??'',areaTerreno:p.landArea??'',codigo:p.code,asesor:data.settings.advisor.name,telefono:data.settings.advisor.phone,inmobiliaria:data.settings.advisor.agency,caracteristicas:features(p).join('\n')};}
-function features(p){return [[p.bedrooms,'🛏 Dormitorios'],[p.bathrooms,'🚿 Baños'],[p.builtArea,'📐 m² construidos'],[p.landArea,'📏 m² de terreno']].filter(([v])=>v!==null&&v!==undefined).map(([v,label])=>`${label}: ${v}`);}
-function fillTemplate(template,p){const values=tokens(p);return template.split('\n').filter(line=>![...line.matchAll(/\{(\w+)\}/g)].some(([,k])=>values[k]===''||values[k]==null)).map(line=>line.replace(/\{(\w+)\}/g,(_,k)=>values[k]??`{${k}}`)).join('\n');}
-function updatePublicationSummary(){ const p=getPublicationProperty(); $('#generatedContent').innerHTML=''; $('#descriptionTemplate').value=data.templates.find(t=>t.operation===p?.operation)?.description||defaultTemplate; $('#publicationPropertySummary').innerHTML=p?`<strong>${esc(typeLabel(p.propertyType))} en ${esc(p.zone)}</strong><br><span class="muted">${esc(p.code)} · ${money(p.priceBs)} · ${statusLabel(p.status)}</span>`:'<p class="empty-state">Selecciona una propiedad para generar sus textos.</p>'; }
-function generatePublication(){ const p=getPublicationProperty(); if(!p){toast('Selecciona una propiedad primero');return;} const description=fillTemplate($('#descriptionTemplate').value,p)+`\n\nRef.: ${p.code}`; const values=tokens(p); const title=`${values.tipo} en ${operationLabel(p.operation)} · ${values.zona}${p.bedrooms!=null?` · ${p.bedrooms} dormitorios`:''}`; const hashtags=`#${values.tipo.replace(/\s/g,'')} #${values.operacion} #Sucre #${values.zona.replace(/\s/g,'')} #InmueblesBolivia`; const keywords=[values.tipo,values.operacion,values.zona,'Sucre','inmobiliaria','inmueble','propiedad','propiedades en Sucre','asesoría inmobiliaria','bienes raíces','Bolivia','inversión','hogar','vivienda','consulta inmobiliaria','visita','precio','oportunidad','asesor inmobiliario','Marketplace']; const cover=`${values.tipo} en ${values.zona}\n${values.precio}`; const whatsapp=`Hola, te comparto ${values.tipo.toLowerCase()} en ${values.zona}. Precio: ${values.precio}. ${features(p).join(' · ')} Ref. ${p.code}. ¿Te gustaría coordinar una visita?`; const reel=`¿Buscas una propiedad en ${values.zona}? Mira esta opción: ${values.tipo.toLowerCase()}, ${features(p).join(', ')}. Precio: ${values.precio}. Escríbeme para conocerla.`; const blocks=[['Título para Marketplace',title],['Descripción',description],['Hashtags',hashtags],['20 palabras clave',keywords.join(', ')],['Texto para portada',cover],['Mensaje de WhatsApp',whatsapp],['Guion para historia o reel',reel]]; $('#generatedContent').innerHTML=blocks.map(([heading,text],index)=>`<div class="generated-block"><div class="generated-title"><h3>${heading}</h3><button class="copy-button" data-copy-index="${index}">Copiar</button></div><div class="generated-text" id="generatedText${index}">${esc(text)}</div></div>`).join(''); blocks.forEach(([,text],index)=>$$(`[data-copy-index="${index}"]`).forEach(button=>button.addEventListener('click',()=>copyText(text)))); }
-async function copyText(text){try{if(!navigator.clipboard?.writeText)throw Error();await navigator.clipboard.writeText(text);toast('Texto copiado');}catch(error){const area=document.createElement('textarea');area.value=text;document.body.appendChild(area);area.select();const ok=document.execCommand('copy');area.remove();toast(ok?'Texto copiado':'No se pudo copiar; selecciona el texto manualmente');}}
-
-function exportJson(){ data.settings.lastBackupAt=nowIso(); saveData(); if(typeof updateBackupReminder==='function')updateBackupReminder(); const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); downloadBlob(blob,`crm-inmobiliario-${dateFile()}.json`); toast('Copia JSON descargada'); }
-function csvCell(value){ return `"${String(/^[=+@-]/.test(String(value??''))?"'"+value:value??'').replace(/"/g,'""')}"`; }
-function clientStageLabel(value){return ({nuevo:'Nuevo',contactado:'Contactado',visita:'Visita agendada',negociando:'Negociando',cerrado:'Cerrado',perdido:'Perdido'}[value]||value);}
-function phoneForWhatsApp(phone){let digits=String(phone||'').replace(/\D/g,'');if(digits.length===8)digits='591'+digits;return digits;}
-function openWhatsApp(client,message=''){const phone=phoneForWhatsApp(client.phone);if(phone.length<10){toast('El teléfono no parece válido');return;}window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`,'_blank','noopener');}
-function clientMessage(client){return `Hola ${client.name}, soy ${data.settings.advisor.name||'tu asesor inmobiliario'}. ¿Cómo puedo ayudarte con tu búsqueda de ${client.search||'una propiedad'}?`;}
-function clientLastContact(client){const items=client.interactions||[];return items.length?items.map(i=>new Date(i.date)).sort((a,b)=>b-a)[0]:client.createdAt?new Date(client.createdAt):null;}
-function clientCard(c){const last=clientLastContact(c);return `<article class="client-card" draggable="true" data-client-id="${esc(c.id)}"><div class="panel-heading"><strong>${esc(c.name)}</strong><span class="badge">${clientStageLabel(c.status)}</span></div><p class="muted small">☎ ${esc(c.phone)}${c.zone?' · 📍 '+esc(c.zone):''}</p><p class="small">${esc(c.search||'Busca una propiedad')} ${c.budgetBs?`· Hasta ${money(c.budgetBs)}`:''}</p><p class="small muted">${last?'Último contacto: '+last.toLocaleDateString('es-BO'):'Sin contacto registrado'}</p><div class="card-actions"><button class="secondary-button" data-client-action="whatsapp" data-id="${esc(c.id)}">WhatsApp</button><button class="secondary-button" data-client-action="interaction" data-id="${esc(c.id)}">Registrar contacto</button><button class="secondary-button" data-client-action="edit-client" data-id="${esc(c.id)}">Editar</button></div></article>`;}
-const clientStages=[['nuevo','Nuevo'],['contactado','Contactado'],['visita','Visita agendada'],['negociando','Negociando'],['cerrado','Cerrado'],['perdido','Perdido']];
-function renderClients(){const q=$('#clientSearch').value.trim().toLowerCase(),source=$('#clientSourceFilter').value,status=$('#clientStatusFilter').value;const clients=data.clients.filter(c=>(!q||[c.name,c.phone,c.zone,c.search].join(' ').toLowerCase().includes(q))&&(!source||c.source===source)&&(!status||c.status===status));$('#clientsBoard').innerHTML=clientStages.map(([stage,label])=>`<section class="kanban-column" data-stage="${stage}"><div class="kanban-heading"><h3>${label}</h3><span>${clients.filter(c=>c.status===stage).length}</span></div><div class="kanban-cards">${clients.filter(c=>c.status===stage).map(clientCard).join('')||'<p class="empty-state small">Sin clientes</p>'}</div></section>`).join('');bindClientActions();}
-function renderFollowups(){const now=new Date(),todayKey=now.toISOString().slice(0,10);const due=data.clients.filter(c=>c.followUpAt&&new Date(c.followUpAt)<=new Date(now.getTime()+24*60*60*1000)&&c.status!=='cerrado'&&c.status!=='perdido').sort((a,b)=>new Date(a.followUpAt)-new Date(b.followUpAt));$('#followupCount').textContent=due.length;$('#todayFollowups').innerHTML=due.length?due.map(followupItem).join(''):'<p class="empty-state">No tienes seguimientos para hoy.</p>';const limit=Number(data.settings.followUpDays)||7;const stale=data.clients.filter(c=>!['cerrado','perdido'].includes(c.status)&&(!clientLastContact(c)||now-clientLastContact(c)>limit*86400000));$('#staleClients').innerHTML=stale.length?stale.map(c=>followupItem(c,true)).join(''):'<p class="empty-state">No hay clientes atrasados.</p>';bindClientActions();}
-function followupItem(c,stale=false){return `<div class="followup-item"><div><strong>${esc(c.name)}</strong><br><span class="small muted">${stale?'Sin contacto reciente':'Seguimiento: '+new Date(c.followUpAt).toLocaleString('es-BO',{dateStyle:'short',timeStyle:'short'})}</span></div><div class="button-row"><button class="copy-button" data-client-action="whatsapp" data-id="${esc(c.id)}">WhatsApp</button><button class="copy-button" data-client-action="interaction" data-id="${esc(c.id)}">Registrar</button></div></div>`;}
-function bindClientActions(){ $$('.client-card[draggable]').forEach(card=>{card.ondragstart=e=>e.dataTransfer.setData('text/plain',card.dataset.clientId);});$$('.kanban-column').forEach(col=>{col.ondragover=e=>e.preventDefault();col.ondrop=e=>{const id=e.dataTransfer.getData('text/plain'),next=clone(data),c=next.clients.find(x=>x.id===id);if(c){c.status=col.dataset.stage;c.updatedAt=nowIso();if(commit(next)){renderClients();renderFollowups();toast('Etapa actualizada');}}};});$$('[data-client-action]').forEach(button=>button.onclick=()=>{const c=data.clients.find(x=>x.id===button.dataset.id);if(!c)return;const action=button.dataset.clientAction;if(action==='whatsapp')openWhatsApp(c,clientMessage(c));if(action==='edit-client')openClientDialog(c);if(action==='interaction')openInteractionDialog(c);});}
-function renderClientPropertyChoices(selected=[]){$('#clientPropertyChoices').innerHTML=data.properties.map(p=>`<label><input type="checkbox" value="${esc(p.id)}" ${selected.includes(p.id)?'checked':''}/> ${esc(p.code)} · ${esc(p.propertyType)} en ${esc(p.zone)}</label>`).join('')||'<span class="muted small">Primero registra propiedades.</span>';}
-function openClientDialog(client=null){$('#clientDialogTitle').textContent=client?'Editar cliente':'Nuevo cliente';$('#clientId').value=client?.id||'';$('#clientName').value=client?.name||'';$('#clientPhone').value=client?.phone||'';$('#clientSearchNeed').value=client?.search||'';$('#clientBudget').value=client?.budgetBs??'';$('#clientZone').value=client?.zone||'';$('#clientOperation').value=client?.operation||'';$('#clientPropertyType').value=client?.propertyType||'';$('#clientBedrooms').value=client?.bedrooms??'';$('#clientSource').value=client?.source||'Marketplace';$('#clientFollowUp').value=client?.followUpAt||'';$('#clientStatus').value=client?.status||'nuevo';$('#clientNotes').value=client?.notes||'';renderClientPropertyChoices(client?.interestedPropertyIds||[]);renderClientInteractionHistory(client);renderClientMatches(client);$('#clientDialog').showModal();}
-function renderClientInteractionHistory(client){const root=$('#clientInteractionHistory');if(!root)return;const items=(client?.interactions||[]).slice().sort((a,b)=>new Date(b.date)-new Date(a.date));root.innerHTML=items.length?items.map(i=>`<div class="followup-item"><span><strong>${esc(i.type)}</strong><br><span class="small muted">${new Date(i.date).toLocaleString('es-BO',{dateStyle:'short',timeStyle:'short'})}</span></span><span class="small">${esc(i.note)}</span></div>`).join(''):'<p class="muted small">Todavía no hay interacciones registradas.</p>';}
-function closeClientDialog(){$('#clientDialog').close();}
-function saveClient(event){event.preventDefault();if(!$('#clientForm').reportValidity())return;const id=$('#clientId').value,existing=data.clients.find(c=>c.id===id),phone=$('#clientPhone').value.trim();if(!/^\+?[\d\s()-]{7,25}$/.test(phone)){toast('Revisa el teléfono del cliente');return;}const timestamp=nowIso();const client={...existing,id:id||'client-'+(globalThis.crypto?.randomUUID?.()||Date.now()),name:$('#clientName').value.trim(),phone,search:$('#clientSearchNeed').value.trim(),budgetBs:$('#clientBudget').value?Number($('#clientBudget').value):null,zone:$('#clientZone').value.trim(),operation:$('#clientOperation').value,propertyType:$('#clientPropertyType').value,bedrooms:$('#clientBedrooms').value?Number($('#clientBedrooms').value):null,source:$('#clientSource').value,followUpAt:$('#clientFollowUp').value,status:$('#clientStatus').value,notes:$('#clientNotes').value.trim(),interestedPropertyIds:$$('#clientPropertyChoices input:checked').map(x=>x.value),interactions:existing?.interactions||[],createdAt:existing?.createdAt||timestamp,updatedAt:timestamp};const next=clone(data);next.clients=existing?next.clients.map(c=>c.id===id?client:c):[...next.clients,client];if(commit(next)){closeClientDialog();renderClients();renderFollowups();updateDashboard();toast('Cliente guardado');}}
-function openInteractionDialog(client){$('#interactionClientId').value=client.id;$('#interactionDate').value=toLocalInputValue(new Date());$('#interactionNote').value='';$('#interactionDialog').showModal();}
-function toLocalInputValue(date){const d=new Date(date.getTime()-date.getTimezoneOffset()*60000);return d.toISOString().slice(0,16);}
-function saveInteraction(event){event.preventDefault();if(!$('#interactionForm').reportValidity())return;const id=$('#interactionClientId').value,next=clone(data),client=next.clients.find(c=>c.id===id);if(!client)return;client.interactions=client.interactions||[];client.interactions.push({id:'int-'+Date.now(),type:$('#interactionType').value,date:new Date($('#interactionDate').value).toISOString(),note:$('#interactionNote').value.trim()});client.updatedAt=nowIso();if(commit(next)){$('#interactionDialog').close();renderClients();renderFollowups();toast('Interacción registrada');}}
-function exportClientsCsv(){const headers=['Nombre','Teléfono','Qué busca','Presupuesto Bs','Zona','Operación','Tipo','Dormitorios','Origen','Etapa','Próximo seguimiento','Notas'];const rows=data.clients.map(c=>[c.name,c.phone,c.search,c.budgetBs,c.zone,operationLabel(c.operation),typeLabel(c.propertyType),c.bedrooms,c.source,clientStageLabel(c.status),c.followUpAt,c.notes]);const csv='\ufeff'+[headers,...rows].map(row=>row.map(csvCell).join(';')).join('\n');downloadBlob(new Blob([csv],{type:'text/csv;charset=utf-8'}),`clientes-${dateFile()}.csv`);toast('CSV de clientes descargado');}
-
-function exportPropertiesCsv(){ const headers=['Código','Operación','Tipo','Zona','Dirección','Referencia','Precio Bs','Precio USD','Dormitorios','Baños','m² terreno','m² construidos','Piso','Estado','Propietario','Contacto','Servicios','Amoblado','Notas']; const rows=data.properties.map(p=>[p.code,operationLabel(p.operation),typeLabel(p.propertyType),p.zone,p.address,p.reference,p.priceBs,p.priceUsd,p.bedrooms,p.bathrooms,p.landArea,p.builtArea,p.floor,statusLabel(p.status),p.ownerName,p.ownerPhone,Object.entries(p.services||{}).filter(([,v])=>v).map(([k])=>k).join(', '),p.furnished?'Sí':'No',p.notes]); const csv='\ufeff'+[headers,...rows].map(row=>row.map(csvCell).join(';')).join('\n'); downloadBlob(new Blob([csv],{type:'text/csv;charset=utf-8'}),`propiedades-${dateFile()}.csv`); toast('CSV de propiedades descargado'); }
-function dateFile(){ return new Date().toISOString().slice(0,10); }
-function downloadBlob(blob,name){ const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),500); }
-function validateBackup(raw){
- if(!raw||raw.version!==1)throw Error('Versión de respaldo incompatible');
- for(const key of ['properties','clients','owners','visits','closures','templates','library'])if(!Array.isArray(raw[key]))throw Error(`Falta la colección ${key}`);
- const ids=new Set(),codes=new Set();
- for(const p of raw.properties){if(!p||typeof p.id!=='string'||!p.id||ids.has(p.id)||typeof p.code!=='string'||!p.code||codes.has(p.code.toLowerCase()))throw Error('Identificadores o códigos inválidos/duplicados');ids.add(p.id);codes.add(p.code.toLowerCase());for(const key of ['zone','address'])if(typeof p[key]!=='string'||!p[key].trim())throw Error('Ficha incompleta');if(!['venta','alquiler','anticretico'].includes(p.operation)||!['casa','departamento','cuarto','local','terreno','oficina'].includes(p.propertyType)||!['disponible','reservado','vendido'].includes(p.status))throw Error('Tipo o estado inválido');for(const key of ['priceBs','priceUsd','bedrooms','bathrooms','landArea','builtArea'])if(p[key]!=null&&(typeof p[key]!=='number'||!Number.isFinite(p[key])||p[key]<0))throw Error('Número inválido');if(!Array.isArray(p.photos)||!p.photos.every(validPhoto)||!Array.isArray(p.documents)||!Array.isArray(p.priceHistory))throw Error('Fotos o documentación inválidas');}
- validateVisits(raw.visits, raw.clients, raw.properties); if(typeof validateClosures==='function')validateClosures(raw.closures, raw.properties, raw.clients); const next=clone(raw);next.settings={...clone(DEFAULT_DATA.settings),...raw.settings,advisor:{...DEFAULT_DATA.settings.advisor,...raw.settings?.advisor}};if(!(Number(next.settings.exchangeRate)>0))throw Error('Tipo de cambio inválido');next.counters={...DEFAULT_DATA.counters,...raw.counters};return next;
+function renderClients(){
+  const q=$('#clientSearch').value.trim(),st=$('#filterStage').value,pr=$('#filterPriority').value,so=$('#filterSource').value,sort=$('#sortClients').value;
+  let list=data.clients.filter(c=>(!st||c.stage===st)&&(!pr||c.priority===pr)&&(!so||c.source===so)&&matchesQuery(c,q));
+  const far='9999';
+  if(sort==='follow')list.sort((a,b)=>((ACTIVE_STAGES.includes(a.stage)&&a.followUp)||far).localeCompare((ACTIVE_STAGES.includes(b.stage)&&b.followUp)||far)||(PRIORITY_ORDER[a.priority]-PRIORITY_ORDER[b.priority]));
+  else if(sort==='recent')list.sort((a,b)=>(b.updatedAt||'').localeCompare(a.updatedAt||''));
+  else list.sort((a,b)=>a.name.localeCompare(b.name,'es'));
+  $('#clientCount').textContent=`${list.length} de ${data.clients.length} clientes`;
+  $('#clientList').innerHTML=list.map(c=>clientItem(c,c.followUp&&ACTIVE_STAGES.includes(c.stage)?esc(whenLabel(c.followUp)+' · '+(c.phone||'')):'')).join('')||emptyMsg(data.clients.length?'Ningún cliente coincide con la búsqueda.':'Aún no tienes clientes. Toca + para agregar el primero.');
 }
-async function importJson(event){const file=event.target.files[0];event.target.value='';if(!file)return;try{const next=validateBackup(JSON.parse(await file.text()));if(!confirm('Se descargará un respaldo previo antes de reemplazar los datos. ¿Continuar?'))return;exportJson();if(!commit(next))return;renderProperties();renderPublicationSelect();updateDashboard();document.body.classList.toggle('dark',data.settings.theme==='dark');loadSettings();$('#importStatus').textContent='Datos importados correctamente.';}catch(error){$('#importStatus').textContent='No se importó: '+error.message;}}
 
-function handleAction(event){ const button=event.currentTarget,action=button.dataset.action,id=button.dataset.id; if(action==='print-property')printProperty(id); if(action==='new-property')openPropertyDialog(); if(action==='open-publications')switchView('publicationView'); if(action==='open-backup')switchView('backupView'); if(action==='open-properties')switchView('propertiesView'); if(action==='edit-property')openPropertyDialog(data.properties.find(p=>p.id===id)); if(action==='duplicate-property')duplicateProperty(id); if(action==='delete-property')deleteProperty(id); if(action==='publish-property'){switchView('publicationView');renderPublicationSelect(id);} }
-function toggleTheme(){const next=clone(data);next.settings.theme=next.settings.theme==='dark'?'light':'dark';if(commit(next))document.body.classList.toggle('dark',data.settings.theme==='dark');}
-function initialize(){ document.body.classList.toggle('dark',data.settings.theme==='dark'); $$('.nav-button').forEach(button=>button.addEventListener('click',()=>switchView(button.dataset.view))); $('#newPropertyButton').addEventListener('click',()=>openPropertyDialog()); $('#newPropertyButton2').addEventListener('click',()=>openPropertyDialog()); $('#propertyForm').addEventListener('submit',saveProperty); $('#cancelPropertyButton').addEventListener('click',closePropertyDialog); $('#closePropertyDialog').addEventListener('click',closePropertyDialog); $('#photos').addEventListener('change',handlePhotoSelection); ['propertySearch','operationFilter','statusFilter','propertySort','zoneFilter','typeFilter','minPrice','maxPrice'].forEach(id=>{ $(('#'+id)).addEventListener('input',renderProperties); $(('#'+id)).addEventListener('change',renderProperties); }); $('#propertySearch').addEventListener('search',renderProperties); $('#publicationPropertySelect').addEventListener('change',updatePublicationSummary); $('#generatePublicationButton').addEventListener('click',generatePublication); $('#exportJsonButton').addEventListener('click',exportJson); $('#exportPropertiesCsvButton').addEventListener('click',exportPropertiesCsv); $('#exportClientsCsvButton').addEventListener('click',exportClientsCsv); $('#newClientButton').addEventListener('click',()=>openClientDialog()); $('#newClientButton2').addEventListener('click',()=>openClientDialog()); $('#clientForm').addEventListener('submit',saveClient); $('#cancelClientButton').addEventListener('click',closeClientDialog); $('#closeClientDialog').addEventListener('click',closeClientDialog); $('#interactionForm').addEventListener('submit',saveInteraction); $('#cancelInteractionButton').addEventListener('click',()=>$('#interactionDialog').close()); $('#closeInteractionDialog').addEventListener('click',()=>$('#interactionDialog').close()); ['clientSearch','clientSourceFilter','clientStatusFilter'].forEach(id=>$('#'+id).addEventListener('input',renderClients)); $('#importJsonInput').addEventListener('change',importJson); $('#themeToggle').addEventListener('click',toggleTheme); $$('[data-action]').filter(b=>!b.closest('#propertiesList')).forEach(button=>button.addEventListener('click',handleAction)); setupExtras(); updateDashboard();renderProperties();renderPublicationSelect(); }
-// Documentación, validación, configuración y ficha pública.
-function validateForm(){const code=$('#code').value.trim();if(!code||!$('#zone').value.trim()||!$('#address').value.trim()){toast('Completa los campos obligatorios');return false;}if(data.properties.some(p=>p.id!==$('#propertyId').value&&p.code.toLowerCase()===code.toLowerCase())){toast('El código ya existe');return false;}if($('#ownerPhone').value&&!/^\+?[\d\s()-]{7,25}$/.test($('#ownerPhone').value)){toast('Revisa el teléfono del propietario');return false;}return true;}
-function renderDocuments(){const root=$('#documentChecklist');root.replaceChildren();pendingDocuments.forEach((doc,index)=>{const row=document.createElement('div');row.className='document-row';const check=document.createElement('input');check.type='checkbox';check.checked=!!doc.checked;check.onchange=()=>doc.checked=check.checked;const name=document.createElement('input');name.value=doc.name||'';name.maxLength=100;name.oninput=()=>doc.name=name.value;const remove=document.createElement('button');remove.type='button';remove.textContent='Quitar';remove.className='secondary-button';remove.onclick=()=>{pendingDocuments.splice(index,1);renderDocuments();};row.append(check,name,remove);root.append(row);});}
-function renderHistory(p){$('#priceHistoryView').innerHTML=(p?.priceHistory||[]).map(h=>`<p>${esc(new Date(h.date).toLocaleDateString('es-BO'))}: ${money(h.priceBs)} · USD ${Number(h.priceUsd||0)}</p>`).join('')||'<p class="muted">Se registra al guardar.</p>';}
-function printProperty(id){const p=data.properties.find(p=>p.id===id);if(!p)return;const v=tokens(p);$('#printSheet').innerHTML=`<h1>${esc(v.tipo)} en ${esc(v.operacion)}</h1><h2>${esc(p.zone)}</h2><p>${esc(p.address)} ${esc(p.reference)}</p><h2>${esc(v.precio)}</h2><p>Código: ${esc(p.code)} · ${esc(statusLabel(p.status))}</p>${features(p).map(f=>`<p>${esc(f)}</p>`).join('')}<p>${esc(p.floor?'Piso: '+p.floor:'')}</p><p>${esc(Object.entries(p.services||{}).filter(([,v])=>v).map(([k])=>({water:'Agua',electricity:'Luz',gas:'Gas',internet:'Internet'}[k])).join(' · '))}${p.furnished?' · Amoblado':''}</p><div class="print-photos">${p.photos.filter(validPhoto).map(photo=>`<img src="${photo}" alt="Foto de la propiedad">`).join('')}</div><p>${esc(v.asesor)} · ${esc(v.telefono)} · ${esc(v.inmobiliaria)}</p>`;const images=[...$('#printSheet').querySelectorAll('img')];Promise.all(images.map(img=>img.decode?.().catch(()=>{})||Promise.resolve())).then(()=>window.print());}
-function loadSettings(){ $('#exchangeRate').value=data.settings.exchangeRate;$('#advisorName').value=data.settings.advisor.name;$('#advisorPhone').value=data.settings.advisor.phone;$('#advisorAgency').value=data.settings.advisor.agency;$('#followUpDays').value=data.settings.followUpDays||7;$('#defaultCommission').value=data.settings.defaultCommission??3;$('#codePrefix').value=data.settings.codePrefix??'PROP-';}
-function setupExtras(){loadSettings();$('#addDocument').onclick=()=>{pendingDocuments.push({name:'Nuevo documento',checked:false});renderDocuments();};$('#propertyDialog').addEventListener('cancel',e=>{if(photoProcessing)e.preventDefault();});$('#saveSettings').onclick=()=>{const rate=Number($('#exchangeRate').value);if(!Number.isFinite(rate)||rate<=0){toast('Tipo de cambio inválido');return;}const next=clone(data);next.settings.exchangeRate=rate;next.settings.advisor={name:$('#advisorName').value.trim(),phone:$('#advisorPhone').value.trim(),agency:$('#advisorAgency').value.trim()};next.settings.followUpDays=Math.max(1,Number($('#followUpDays').value)||7);next.settings.defaultCommission=Math.max(0,Math.min(100,Number($('#defaultCommission').value)||0));next.settings.codePrefix=$('#codePrefix').value.trim();if(commit(next))toast('Configuración guardada');};$('#descriptionTemplate').addEventListener('change',()=>{const p=getPublicationProperty();if(!p)return;const next=clone(data);next.templates=next.templates.filter(t=>t.operation!==p.operation);next.templates.push({operation:p.operation,description:$('#descriptionTemplate').value});commit(next);});$('#priceBs').addEventListener('change',()=>{if($('#priceBs').value)$('#priceUsd').value=(Number($('#priceBs').value)/data.settings.exchangeRate).toFixed(2);});$('#priceUsd').addEventListener('change',()=>{if($('#priceUsd').value)$('#priceBs').value=(Number($('#priceUsd').value)*data.settings.exchangeRate).toFixed(2);});}
-document.addEventListener('DOMContentLoaded',initialize);
-document.addEventListener('DOMContentLoaded',()=>{window.mediaPromise=hydrateMedia();});
+/* ---------- Ficha de cliente ---------- */
+let editing=null; // copia de trabajo del cliente abierto
+function fillSelect(sel,opts,first){sel.innerHTML=(first?`<option value="">${first}</option>`:'')+opts.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join('');}
+function openDialog(d){d.showModal();history.pushState({dialog:d.id},'');}
+function closeDialog(d){if(d.open){d.close();if(history.state&&history.state.dialog===d.id)history.back();}}
+addEventListener('popstate',()=>{$$('dialog[open]').forEach(d=>d.close());});
+
+function openClient(id){
+  const c=id?clientById(id):null;
+  editing=c?JSON.parse(JSON.stringify(c)):{id:'',properties:[],log:[],tags:[]};
+  $('#clientTitle').textContent=c?c.name:'Nuevo cliente';
+  $('#cId').value=c?c.id:'';
+  $('#cName').value=c?.name||'';$('#cPhone').value=c?.phone||'';$('#cPhone2').value=c?.phone2||'';
+  $('#cSource').value=c?.source||SOURCES[0];$('#cPriority').value=c?.priority||'tibia';$('#cTags').value=(c?.tags||[]).join(', ');
+  $('#cStage').value=c?.stage||'nuevo';$('#cFollowUp').value=c?c.followUp||'':addDays(0,new Date().getHours()+2>22?22:new Date().getHours()+2);
+  $('#cLostReason').value=c?.lostReason||'';
+  const k=c?.closing||{};$('#kDate').value=k.date||todayStr();$('#kCode').value=k.code||(c?.properties.at(-1)?.code||'');$('#kAmount').value=k.amount||'';$('#kCurrency').value=k.currency||'USD';$('#kPct').value=k.pct??S().commission;
+  $('#cOperation').value=c?.operation||'';$('#cType').value=c?.type||'';$('#cBudget').value=c?.budget||'';$('#cCurrency').value=c?.currency||'USD';
+  $('#cZone').value=c?.zone||'';$('#cBedrooms').value=c?.bedrooms??'';$('#cPayment').value=c?.payment||'';$('#cNotes').value=c?.notes||'';
+  $('#codeInput').value='';$('#codeNote').value='';$('#codeError').hidden=true;$('#logNote').value='';$('#dupWarning').hidden=true;
+  $('#deleteClient').hidden=!c;$('#historyBox').hidden=false;
+  renderContactBar();renderCodes();renderLog();toggleStageBoxes();calcCommission();
+  openDialog($('#clientDialog'));
+  if(!c)$('#cName').focus();
+}
+function renderContactBar(){
+  const phone=$('#cPhone').value.trim();
+  $('#contactBar').innerHTML=phone&&$('#cId').value?`<a class="wa" href="${waLink({name:$('#cName').value,phone})}" target="_blank" rel="noopener" data-contact="whatsapp" data-id="${$('#cId').value}">💬 WhatsApp</a><a class="call" href="${telLink(phone)}" data-contact="llamada" data-id="${$('#cId').value}">📞 Llamar</a>`:'';
+}
+function renderCodes(){
+  $('#codeList').innerHTML=editing.properties.map((p,i)=>`<div class="code"><strong>${esc(p.code)}</strong><span>${esc(p.note||'')}${p.date?' · '+esc(df.format(new Date(p.date))):''}</span><button type="button" data-del-code="${i}" aria-label="Quitar">✕</button></div>`).join('')||'<p class="muted small">Aún no hay propiedades registradas.</p>';
+}
+function renderLog(){
+  $('#logList').innerHTML=[...editing.log].sort((a,b)=>b.date.localeCompare(a.date)).map(l=>`<div class="log"><small><span>${LOG_ICON[l.type]||'•'} ${esc(dtf.format(new Date(l.date)))}</span><button type="button" data-del-log="${l.id}" aria-label="Borrar">✕</button></small><p>${esc(l.note)}</p></div>`).join('')||'<p class="muted small">Sin interacciones registradas.</p>';
+}
+function toggleStageBoxes(){const s=$('#cStage').value;$('#lostBox').hidden=s!=='perdido';$('#closeBox').hidden=s!=='cerrado';}
+function commissionBs(k){if(!k||!k.amount)return 0;const v=k.amount*(k.pct||0)/100;return k.currency==='USD'?v*S().rate:v;}
+function calcCommission(){const k={amount:+$('#kAmount').value,pct:+$('#kPct').value,currency:$('#kCurrency').value};const bs=commissionBs(k);$('#kResult').textContent=bs?`Bs ${bs.toLocaleString('es-BO',{maximumFractionDigits:0})}`+(k.currency==='USD'?` ($us ${(bs/S().rate).toLocaleString('es-BO',{maximumFractionDigits:0})})`:''):'—';}
+function checkDuplicate(){
+  const p=$('#cPhone').value,id=$('#cId').value;
+  const dup=p.replace(/\D/g,'').length>=7&&data.clients.find(c=>c.id!==id&&(samePhone(c.phone,p)||samePhone(c.phone2,p)));
+  $('#dupWarning').hidden=!dup;if(dup)$('#dupWarning').textContent=`⚠ Ya existe un cliente con este celular: ${dup.name}`;
+}
+function addCode(){
+  const code=normalizeCode($('#codeInput').value);
+  if(!code){$('#codeError').textContent='Código no válido. Ejemplos: DOM-000123, 123';$('#codeError').hidden=false;return;}
+  $('#codeError').hidden=true;
+  const note=$('#codeNote').value.trim(),ex=editing.properties.find(p=>p.code===code);
+  if(ex){if(note)ex.note=note;}else editing.properties.push({code,note,date:todayStr()});
+  $('#codeInput').value='';$('#codeNote').value='';renderCodes();
+  if(!$('#kCode').value)$('#kCode').value=code;
+}
+function addLog(){
+  const note=$('#logNote').value.trim();if(!note){$('#logNote').focus();return;}
+  editing.log.push({id:uid(),type:$('#logType').value,date:nowISO(),note});
+  $('#logNote').value='';renderLog();
+  // al registrar un contacto, sugerir el próximo seguimiento
+  if(!$('#cFollowUp').value||new Date($('#cFollowUp').value)<new Date())$('#cFollowUp').value=addDays(+S().followDays||3);
+  if($('#cStage').value==='nuevo'&&$('#logType').value!=='nota'){$('#cStage').value='contactado';toggleStageBoxes();}
+}
+function saveClient(){
+  const name=$('#cName').value.trim(),phone=$('#cPhone').value.trim();
+  if(!name||!phone){toast('Nombre y celular son obligatorios');return false;}
+  const id=$('#cId').value||uid(),prev=clientById(id),now=nowISO(),stage=$('#cStage').value;
+  const c={...editing,id,name,phone,phone2:$('#cPhone2').value.trim(),source:$('#cSource').value,priority:$('#cPriority').value,
+    tags:$('#cTags').value.split(',').map(t=>t.trim()).filter(Boolean),stage,followUp:$('#cFollowUp').value,
+    lostReason:stage==='perdido'?$('#cLostReason').value:'',operation:$('#cOperation').value,type:$('#cType').value,
+    budget:+$('#cBudget').value||0,currency:$('#cCurrency').value,zone:$('#cZone').value.trim(),bedrooms:$('#cBedrooms').value===''?'':+$('#cBedrooms').value,
+    payment:$('#cPayment').value,notes:$('#cNotes').value.trim(),createdAt:prev?.createdAt||now,updatedAt:now};
+  if(stage==='cerrado'){const code=normalizeCode($('#kCode').value);c.closing={date:$('#kDate').value||todayStr(),code:code||'',amount:+$('#kAmount').value||0,currency:$('#kCurrency').value,pct:+$('#kPct').value||0};}
+  else delete c.closing;
+  if(!prev||prev.stage!==stage){c.stageDate=now;if(prev)c.log.push({id:uid(),type:'etapa',date:now,note:`Etapa: ${STAGE_LABEL[prev.stage]} → ${STAGE_LABEL[stage]}`});}
+  if(prev)Object.assign(prev,c);else data.clients.push(c);
+  saveData();toast(prev?'Cliente actualizado':'Cliente creado');render();return true;
+}
+function deleteClient(){
+  const id=$('#cId').value,c=clientById(id);if(!c)return;
+  const nv=data.visits.filter(v=>v.clientId===id).length;
+  if(!confirm(`¿Eliminar a ${c.name}?${nv?`\nTambién se borrarán sus ${nv} visitas.`:''}\nEsta acción no se puede deshacer.`))return;
+  data.clients=data.clients.filter(x=>x.id!==id);data.visits=data.visits.filter(v=>v.clientId!==id);
+  saveData();closeDialog($('#clientDialog'));render();toast('Cliente eliminado');
+}
+function logContact(id,type){
+  const c=clientById(id);if(!c||!S().autoLog)return;
+  const now=nowISO();
+  const entry={id:uid(),type,date:now,note:type==='whatsapp'?'Escribí por WhatsApp':'Llamé'};
+  c.log.push(entry);
+  if(c.stage==='nuevo'){c.stage='contactado';c.stageDate=now;}
+  if(!c.followUp||new Date(c.followUp)<new Date())c.followUp=addDays(+S().followDays||3);
+  c.updatedAt=now;saveData();
+  if(editing&&editing.id===id&&$('#clientDialog').open){
+    editing.log.push({...entry});editing.stage=c.stage;editing.stageDate=c.stageDate;renderLog();
+    if($('#cStage').value==='nuevo'){$('#cStage').value=c.stage;toggleStageBoxes();}
+    if(!$('#cFollowUp').value||new Date($('#cFollowUp').value)<new Date())$('#cFollowUp').value=c.followUp;
+  }
+  setTimeout(render,300);
+}
+
+/* ---------- Visitas ---------- */
+let visitTab='next';
+const VISIT_LABEL={programada:'Programada',realizada:'Realizada',no_asistio:'No asistió',cancelada:'Cancelada'};
+function visitItem(v){
+  const c=clientById(v.clientId);
+  return `<div class="item" data-visit="${v.id}"><div class="avatar">🏠</div><div class="item-main"><strong>${esc(v.code)} · ${esc(c?c.name:'(cliente eliminado)')}</strong><small><span class="badge">${VISIT_LABEL[v.status]}</span>${esc(whenLabel(v.date))}${v.note?' · '+esc(v.note):''}</small></div>${c?`<div class="item-actions"><a class="round wa" href="${waLink(c)}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a></div>`:''}</div>`;
+}
+function renderVisits(){
+  const now=nowISO();
+  const list=data.visits.filter(v=>visitTab==='next'?(v.status==='programada'&&v.date>=now.slice(0,10)):!(v.status==='programada'&&v.date>=now.slice(0,10)));
+  list.sort((a,b)=>visitTab==='next'?a.date.localeCompare(b.date):b.date.localeCompare(a.date));
+  $('#visitList').innerHTML=list.map(visitItem).join('')||emptyMsg(visitTab==='next'?'No tienes visitas programadas.':'Aún no hay visitas anteriores.');
+}
+function openVisit(id,clientId){
+  if(!data.clients.length){toast('Primero agrega un cliente');return;}
+  const v=id?data.visits.find(x=>x.id===id):null;
+  $('#visitTitle').textContent=v?'Editar visita':'Nueva visita';
+  $('#vClient').innerHTML=[...data.clients].sort((a,b)=>a.name.localeCompare(b.name,'es')).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  $('#vId').value=v?.id||'';$('#vClient').value=v?.clientId||clientId||$('#vClient').value;
+  $('#vCode').value=v?.code||(clientId?clientById(clientId)?.properties.at(-1)?.code||'':'');
+  $('#vDate').value=v?.date||addDays(1,10);$('#vStatus').value=v?.status||'programada';$('#vNote').value=v?.note||'';
+  $('#deleteVisit').hidden=!v;
+  openDialog($('#visitDialog'));
+}
+function saveVisit(){
+  const code=normalizeCode($('#vCode').value);if(!code){toast('Código no válido (ej.: DOM-000123)');return false;}
+  const id=$('#vId').value||uid(),prev=data.visits.find(v=>v.id===id),now=nowISO();
+  const v={id,clientId:$('#vClient').value,code,date:$('#vDate').value,status:$('#vStatus').value,note:$('#vNote').value.trim(),updatedAt:now};
+  const c=clientById(v.clientId);
+  if(c){
+    if(!c.properties.some(p=>p.code===code))c.properties.push({code,note:'Visita',date:todayStr()});
+    if(!prev&&['nuevo','contactado'].includes(c.stage)){c.log.push({id:uid(),type:'etapa',date:now,note:`Etapa: ${STAGE_LABEL[c.stage]} → Visita`});c.stage='visita';c.stageDate=now;}
+    if(v.status!=='programada'&&(!prev||prev.status!==v.status))c.log.push({id:uid(),type:'visita',date:now,note:`Visita ${code}: ${VISIT_LABEL[v.status]}${v.note?' — '+v.note:''}`});
+    c.updatedAt=now;
+  }
+  if(prev)Object.assign(prev,v);else data.visits.push(v);
+  saveData();toast('Visita guardada');render();return true;
+}
+
+/* ---------- Estadísticas ---------- */
+function periodRange(p){
+  const n=new Date(),y=n.getFullYear(),m=n.getMonth();
+  if(p==='month')return [localISO(new Date(y,m,1)),localISO(new Date(y,m+1,1))];
+  if(p==='prev')return [localISO(new Date(y,m-1,1)),localISO(new Date(y,m,1))];
+  if(p==='year')return [localISO(new Date(y,0,1)),localISO(new Date(y+1,0,1))];
+  return ['0000','9999'];
+}
+function bars(entries){const max=Math.max(1,...entries.map(e=>e[1]));return entries.map(([l,v])=>`<div class="bar"><span>${esc(l)}</span><div><i style="width:${v/max*100}%"></i></div><b>${v}</b></div>`).join('')||emptyMsg('Sin datos en este periodo.');}
+function renderStats(){
+  const [a,b]=periodRange($('#statsPeriod').value),inP=d=>d&&d>=a&&d<b;
+  const fresh=data.clients.filter(c=>inP(c.createdAt));
+  const closed=data.clients.filter(c=>c.stage==='cerrado'&&inP(c.closing?.date||c.stageDate));
+  const lost=data.clients.filter(c=>c.stage==='perdido'&&inP(c.stageDate));
+  const comm=closed.reduce((s,c)=>s+commissionBs(c.closing),0);
+  const rate=closed.length+lost.length?Math.round(closed.length/(closed.length+lost.length)*100)+'%':'—';
+  $('#statsKpis').innerHTML=kpi('Clientes nuevos',fresh.length)+kpi('Cierres',closed.length)+kpi('Comisión (Bs)',Math.round(comm).toLocaleString('es-BO'))+kpi('Tasa de cierre',rate);
+  $('#funnel').innerHTML=bars(STAGES.map(([k,l])=>[l,data.clients.filter(c=>c.stage===k).length]));
+  const bySrc={};fresh.forEach(c=>{bySrc[c.source||'Otro']=(bySrc[c.source||'Otro']||0)+1;});
+  $('#bySource').innerHTML=bars(Object.entries(bySrc).sort((x,y)=>y[1]-x[1]));
+  $('#closingsList').innerHTML=closed.sort((x,y)=>(y.closing?.date||'').localeCompare(x.closing?.date||'')).map(c=>clientItem(c,esc([c.closing?.code,c.closing?.amount&&money(c.closing.amount,c.closing.currency),commissionBs(c.closing)&&'Comisión Bs '+Math.round(commissionBs(c.closing)).toLocaleString('es-BO')].filter(Boolean).join(' · ')))).join('')||emptyMsg('Sin cierres en este periodo.');
+  const lr={};lost.forEach(c=>{const r=c.lostReason||'Sin motivo';lr[r]=(lr[r]||0)+1;});
+  $('#lostReasons').innerHTML=bars(Object.entries(lr).sort((x,y)=>y[1]-x[1]));
+}
+
+/* ---------- Ajustes, tema y respaldos ---------- */
+function renderSettings(){
+  const s=S();$('#setName').value=s.name||'';$('#setRate').value=s.rate;$('#setCommission').value=s.commission;$('#setFollowDays').value=s.followDays;$('#setGreeting').value=s.greeting||'';$('#setAutoLog').checked=!!s.autoLog;
+  const t=localStorage.getItem('crm_theme')||'auto';$$('#themeTabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  $('#appVersion').textContent='versión '+APP_VERSION;
+}
+function applyTheme(){const t=localStorage.getItem('crm_theme')||'auto';if(t==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.dataset.theme=t;}
+function download(name,content,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([content],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);}
+function exportCsv(){
+  const cols=[['Nombre','name'],['Celular','phone'],['Celular 2','phone2'],['Etapa',c=>STAGE_LABEL[c.stage]],['Prioridad','priority'],['Origen','source'],['Etiquetas',c=>c.tags.join(', ')],['Operación','operation'],['Tipo','type'],['Zona','zone'],['Presupuesto',c=>c.budget||''],['Moneda','currency'],['Dormitorios','bedrooms'],['Forma de pago','payment'],['Próximo seguimiento','followUp'],['Propiedades',c=>c.properties.map(p=>p.code).join(' ')],['Notas','notes'],['Creado','createdAt']];
+  const cell=v=>{v=String(v??'');return /[";\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  const rows=[cols.map(c=>c[0]),...data.clients.map(c=>cols.map(([,k])=>typeof k==='function'?k(c):c[k]))];
+  download(`clientes-${todayStr()}.csv`,'﻿'+rows.map(r=>r.map(cell).join(';')).join('\r\n'),'text/csv;charset=utf-8');
+}
+
+/* ---------- Eventos ---------- */
+function init(){
+  applyTheme();
+  fillSelect($('#filterStage'),STAGES,'Todas las etapas');fillSelect($('#cStage'),STAGES);
+  fillSelect($('#filterSource'),SOURCES.map(s=>[s,s]),'Todo origen');fillSelect($('#cSource'),SOURCES.map(s=>[s,s]));
+  $$('.tabbar button').forEach(b=>b.onclick=()=>showView(b.dataset.view));
+  $('#fab').onclick=()=>openClient(null);
+  ['#clientSearch','#filterStage','#filterPriority','#filterSource','#sortClients'].forEach(s=>$(s).addEventListener('input',renderClients));
+  $('#statsPeriod').onchange=renderStats;
+  $$('#visitTabs button').forEach(b=>b.onclick=()=>{visitTab=b.dataset.v;$$('#visitTabs button').forEach(x=>x.classList.toggle('on',x===b));renderVisits();});
+  $('#newVisitBtn').onclick=()=>openVisit(null);
+
+  // Clic en listas: abrir cliente/visita o registrar contacto
+  document.addEventListener('click',e=>{
+    const contact=e.target.closest('[data-contact]');
+    if(contact){e.stopPropagation();logContact(contact.dataset.id,contact.dataset.contact);return;}
+    if(e.target.closest('a'))return;
+    const ci=e.target.closest('[data-client]');if(ci&&!ci.closest('dialog')){openClient(ci.dataset.client);return;}
+    const vi=e.target.closest('[data-visit]');if(vi){openVisit(vi.dataset.visit);return;}
+  });
+  $$('[data-close]').forEach(b=>b.onclick=()=>closeDialog(b.closest('dialog')));
+
+  // Ficha de cliente
+  $('#clientForm').addEventListener('submit',e=>{e.preventDefault();if(saveClient())closeDialog($('#clientDialog'));});
+  $('#cStage').onchange=toggleStageBoxes;
+  $('#cPhone').addEventListener('input',()=>{checkDuplicate();renderContactBar();});
+  ['#kAmount','#kPct','#kCurrency'].forEach(s=>$(s).addEventListener('input',calcCommission));
+  $('#kCode').addEventListener('change',()=>{const c=normalizeCode($('#kCode').value);if(c)$('#kCode').value=c;});
+  $('#addCode').onclick=addCode;
+  $('#codeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addCode();}});
+  $('#codeNote').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addCode();}});
+  $('#codeList').addEventListener('click',e=>{const b=e.target.closest('[data-del-code]');if(b){editing.properties.splice(+b.dataset.delCode,1);renderCodes();}});
+  $('#addLog').onclick=addLog;
+  $('#logNote').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addLog();}});
+  $('#logList').addEventListener('click',e=>{const b=e.target.closest('[data-del-log]');if(b&&confirm('¿Borrar esta interacción?')){editing.log=editing.log.filter(l=>l.id!==b.dataset.delLog);renderLog();}});
+  $('#deleteClient').onclick=deleteClient;
+
+  // Visitas
+  $('#visitForm').addEventListener('submit',e=>{e.preventDefault();if(saveVisit())closeDialog($('#visitDialog'));});
+  $('#vCode').addEventListener('change',()=>{const c=normalizeCode($('#vCode').value);if(c)$('#vCode').value=c;});
+  $('#deleteVisit').onclick=()=>{if(!confirm('¿Eliminar esta visita?'))return;data.visits=data.visits.filter(v=>v.id!==$('#vId').value);saveData();closeDialog($('#visitDialog'));render();};
+
+  // Ajustes
+  $('#settingsForm').addEventListener('submit',e=>{e.preventDefault();Object.assign(data.settings,{name:$('#setName').value.trim(),rate:+$('#setRate').value||6.96,commission:+$('#setCommission').value||0,followDays:Math.max(1,+$('#setFollowDays').value||3),greeting:$('#setGreeting').value,autoLog:$('#setAutoLog').checked});saveData();toast('Ajustes guardados');});
+  $$('#themeTabs button').forEach(b=>b.onclick=()=>{try{localStorage.setItem('crm_theme',b.dataset.t);}catch(e){}applyTheme();renderSettings();});
+  $('#exportJson').onclick=()=>download(`respaldo-crm-${todayStr()}.json`,JSON.stringify(data,null,1),'application/json');
+  $('#exportCsv').onclick=exportCsv;
+  $('#importJsonBtn').onclick=()=>$('#importJson').click();
+  $('#importJson').onchange=async e=>{
+    const f=e.target.files[0];e.target.value='';if(!f)return;
+    try{const next=sanitize(JSON.parse(await f.text()));
+      if(!confirm(`El respaldo tiene ${next.clients.length} clientes y ${next.visits.length} visitas.\n¿Reemplazar los datos actuales?`))return;
+      data=next;saveData();render();toast('Respaldo restaurado');}
+    catch(err){alert('El archivo no es un respaldo válido.');}
+  };
+  $('#wipeAll').onclick=()=>{if(prompt('Escribe BORRAR para eliminar todos los datos de este dispositivo')!=='BORRAR')return;data=emptyData();saveData();render();toast('Datos borrados');};
+
+  // Volver a calcular "atrasado/hoy" cada minuto
+  setInterval(()=>{if(!$$('dialog[open]').length)render();},60000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!$$('dialog[open]').length)render();});
+
+  if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))registerSW();
+  showView('todayView');
+}
+function registerSW(){
+  navigator.serviceWorker.register('service-worker.js').then(reg=>{
+    const ask=w=>{if(confirm('Hay una versión nueva de la app. ¿Actualizar ahora?'))w.postMessage('SKIP_WAITING');};
+    if(reg.waiting&&navigator.serviceWorker.controller)ask(reg.waiting);
+    reg.addEventListener('updatefound',()=>{const w=reg.installing;if(w)w.addEventListener('statechange',()=>{if(w.state==='installed'&&navigator.serviceWorker.controller)ask(w);});});
+    let reloaded=false;navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!reloaded){reloaded=true;location.reload();}});
+  }).catch(()=>{});
+}
+document.addEventListener('DOMContentLoaded',init);

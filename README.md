@@ -1,51 +1,48 @@
-# Mi CRM Inmobiliario
+# Mi CRM de Clientes
 
-Aplicación web local para asesores inmobiliarios en Bolivia.
+CRM personal para asesor inmobiliario: clientes, seguimientos, visitas y estadísticas.
+Las propiedades se registran solo por su código de la inmobiliaria (`DOM-000001`); fotos, fichas y PDF quedan en el sistema de la empresa.
 
-## Abrir en local
+## Qué incluye
 
-1. Descarga y descomprime la carpeta.
-2. Mantén todos los archivos juntos.
-3. Abre `index.html` con doble clic.
+- **Hoy:** seguimientos atrasados, los del día, visitas de la semana y clientes nuevos sin contactar.
+- **Clientes:** buscador (nombre, celular, código DOM, zona, etiqueta) y filtros por etapa, prioridad y origen.
+- **Ficha del cliente:** celulares con botones de WhatsApp y Llamar, origen, prioridad (caliente/tibia/fría), etiquetas, etapa del embudo, próximo seguimiento, qué busca (operación, tipo, zona, presupuesto en Bs o USD, dormitorios, forma de pago), notas, propiedades enviadas o de interés (por código) e historial de interacciones.
+- **Visitas:** agenda por cliente y código; al marcarlas como realizadas quedan en el historial del cliente.
+- **Estadísticas:** clientes nuevos, cierres, comisión, tasa de cierre, embudo, origen de los clientes y motivos de pérdida.
+- **Ajustes:** tipo de cambio, comisión habitual, días entre seguimientos, saludo de WhatsApp, tema claro u oscuro, respaldo JSON y exportación a Excel (CSV).
 
-## Publicar en GitHub Pages
+### Códigos de propiedad
 
-1. Crea un repositorio en GitHub.
-2. Sube todos los archivos de esta carpeta.
-3. En Settings > Pages selecciona `main` y `/(root)`.
-4. Abre la dirección HTTPS que GitHub genere.
+Puedes escribir `DOM-000123`, `dom-123` o solo `123`: siempre se guarda como `DOM-000123` (6 dígitos).
 
-## Instalar como aplicación
+### Automatismos
 
-Desde la dirección HTTPS de GitHub Pages, abre el menú del navegador y selecciona instalar la aplicación.
+- Al tocar **WhatsApp** o **Llamar**, se registra en el historial; si el cliente era "Nuevo", pasa a "Contactado" y se programa el siguiente seguimiento (puedes desactivarlo en Ajustes).
+- Al agendar una visita, el código se añade a la ficha del cliente y su etapa pasa a "Visita".
+- Al marcar un cliente como **Cerrado** puedes anotar el código, el monto y el porcentaje; la comisión se calcula sola (en Bs, usando el tipo de cambio de Ajustes) y alimenta las estadísticas.
+- Avisa si ya existe un cliente con el mismo celular.
 
-## Datos
+## Instalar en el celular
 
-Los datos se guardan en el navegador. Descarga respaldos JSON periódicamente desde Copias de seguridad. Para compartir la aplicación se puede compartir el repositorio o el enlace de GitHub Pages; los datos de cada navegador son independientes.
+1. Publica la carpeta en GitHub Pages: en el repositorio, ve a Settings → Pages, elige la rama y la carpeta `/(root)`.
+2. En el celular, abre la dirección `https://…github.io/…` con **Chrome**.
+3. En el menú ⋮, toca **Instalar aplicación** (o "Agregar a pantalla principal").
 
-## Firebase (opcional, sincroniza entre dispositivos)
+Queda con su icono, se abre a pantalla completa y funciona sin internet. Las actualizaciones llegan solas: aparece un aviso de "versión nueva".
 
-1. Crea un proyecto en console.firebase.google.com, activa **Firestore Database** y **Authentication → Google**.
-2. En Firestore → Reglas pega el contenido de `firestore.rules` y publica.
-3. Authentication → Configuración → Dominios autorizados: agrega `tu-usuario.github.io`.
-4. Pega tu `firebaseConfig` al inicio de `firebase.js` (reemplaza los `PEGAR`).
-5. Abre la app y pulsa **Iniciar sesión**. Punto verde = sincronizado.
+> **¿Y una APK?** Una APK construida desde este mismo código es segura, pero no protege más tus datos y habría que reinstalarla en cada actualización. Lo que evita perder datos es la sincronización con Firebase (abajo).
 
-Sin configuración, la app funciona solo en local.
+## Sincronizar tus dos celulares (Firebase, gratis)
 
-## Consumo de datos (megas)
+1. En console.firebase.google.com, crea un proyecto y luego una **app web** (icono `</>`).
+2. Activa **Firestore Database**. En la pestaña Reglas, pega el contenido de `firestore.rules` y publica.
+3. En **Authentication → Sign-in method**, activa **Google**. En Configuración → Dominios autorizados, agrega `tu-usuario.github.io`.
+4. Copia los valores de `firebaseConfig` al inicio de `firebase.js` (reemplaza los `PEGAR`) y vuelve a publicar.
+5. En la app, toca **Iniciar sesión** con la misma cuenta de Google en los dos celulares. El punto verde indica que está sincronizado.
 
-- Una vez abierta por primera vez, la app funciona sin descargar nada: todos sus archivos quedan guardados en el dispositivo.
-- El SDK de Firebase solo se descarga si Firebase está configurado, y una sola vez.
-- Al abrir la app con sesión iniciada se consulta un único documento pequeño; solo si hubo cambios en otro dispositivo se bajan **únicamente los registros modificados**.
-- Al guardar se suben solo los registros que cambiaron. Cada foto se sube y se baja una sola vez (se identifica por su huella); las fotos que ya no usa ninguna propiedad se borran de la nube.
-- Las fotos nuevas se comprimen en WebP (unos 25–35 % más livianas que JPEG) cuando el navegador lo permite.
-- Si editas el mismo registro en dos dispositivos sin conexión, gana la última versión que se sincronice; los cambios en registros distintos se combinan.
+Ahorro de datos: al abrir la app se consulta un solo documento pequeño y se bajan solo los clientes que cambiaron. Al guardar se sube solo el cliente modificado. El SDK de Firebase se descarga una vez y solo si está configurado. Sin configurar Firebase, la app funciona igual, pero los datos quedan solo en ese dispositivo: descarga respaldos JSON de vez en cuando desde Ajustes.
 
 ## Al publicar cambios
 
-Cambia el número de `CACHE` (`crm-inmobiliario-vN`) en `service-worker.js` para que aparezca el aviso "Hay una versión nueva".
-
-## Importar propiedades (CSV)
-
-En Propiedades > **Importar CSV**. Desde Excel: Guardar como > CSV UTF-8. Debe tener una columna de código (Código, Cod o Ref); las demás se reconocen por nombre (Zona, Dirección, Operación, Tipo, Precio Bs, Precio USD, Dormitorios, Baños, Terreno, Construcción, Estado, Propietario, Teléfono). Si el código ya existe, se actualiza esa ficha (fotos y documentos no se tocan); si no, se crea. Antes de importar se descarga un respaldo.
+Cambia el número de `CACHE` en `service-worker.js` (por ejemplo `crm-clientes-v10`) para que los celulares reciban el aviso de versión nueva.
